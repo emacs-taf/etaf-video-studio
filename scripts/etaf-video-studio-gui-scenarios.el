@@ -193,14 +193,18 @@ only that window is recorded.  Nil verifies target discovery without capture."
       (press "undo" 'video-studio-toolbar-undo (lambda () (= 2 (state :clips))))
       (press "redo" 'video-studio-toolbar-redo (lambda () (= 1 (state :clips))))
       (press "undo-again" 'video-studio-toolbar-undo (lambda () (= 2 (state :clips))))
-      (step "speed-select" (lambda () (etaf-video-studio-gui--choose 'video-studio-speed "2x")) #'idle)
-      (press "speed-apply" 'video-studio-speed-apply
-             (lambda () (= 2 (plist-get (car (plist-get (plist-get (etaf-video-studio-gui--project) :plan) :clips)) :speed))))
-      (press "speed-undo" 'video-studio-toolbar-undo #'idle)
-      (step "gain-select" (lambda () (etaf-video-studio-gui--choose 'video-studio-gain "0.7")) #'idle)
-      (press "gain-apply" 'video-studio-gain-apply
-             (lambda () (= 0.7 (plist-get (car (plist-get (plist-get (etaf-video-studio-gui--project) :plan) :clips)) :gain))))
-      (press "gain-undo" 'video-studio-toolbar-undo #'idle)
+      ;; Choosing a playback value applies it immediately; there is no
+      ;; separate apply button, so this step also proves the undo path.
+      (step "speed-select" (lambda () (etaf-video-studio-gui--choose 'video-studio-speed "2.0×"))
+            (lambda () (= 2 (plist-get (car (plist-get (plist-get (etaf-video-studio-gui--project) :plan) :clips)) :speed))))
+      ;; Undo returns the clip to its unedited state, where the CLI may omit
+      ;; the field entirely; assert the edit is gone rather than a literal.
+      (press "speed-undo" 'video-studio-toolbar-undo
+             (lambda () (not (equal 2 (plist-get (car (plist-get (plist-get (etaf-video-studio-gui--project) :plan) :clips)) :speed)))))
+      (step "gain-select" (lambda () (etaf-video-studio-gui--choose 'video-studio-gain "70%"))
+            (lambda () (= 0.7 (plist-get (car (plist-get (plist-get (etaf-video-studio-gui--project) :plan) :clips)) :gain))))
+      (press "gain-undo" 'video-studio-toolbar-undo
+             (lambda () (not (equal 0.7 (plist-get (car (plist-get (plist-get (etaf-video-studio-gui--project) :plan) :clips)) :gain)))))
       (pane 'captions)
       (step "caption-fields"
             (lambda ()

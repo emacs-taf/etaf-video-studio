@@ -54,16 +54,26 @@ at the clip's actual in point. The seek bar supports pointer positioning and
 one-second Left/Right steps; `SPC` plays or pauses, and `i`, `o` and `s` edit
 at the absolute source position. Selecting a clip also reveals its list page.
 Accepted clip edits and undo/redo refresh the form from the saved result;
-background polls leave unfinished drafts alone.
+background polls leave unfinished drafts alone. The editor separates trimming
+from splitting. Every row aligns its label, value and action; the time fields
+reserve room for millisecond values such as `60.183` without splitting the
+number across lines. Volume is displayed as a percentage rather than a raw gain.
+
+The 剪辑 pane is one framed panel: a title band carrying the clip position, a
+scrolling body with the edit groups and a fixed footer holding 上移／下移 and
+删除. Controls keep one standard row in both palettes, so a short window
+scrolls the body instead of compressing labels, and refocusing a control
+reveals it. 取当前播放位置 fills the corresponding time field as a draft for
+further editing; 应用裁切 saves both fields in one revision.
 
 | Action | Form | Key |
 | --- | --- | --- |
-| Trim to source in/out | 入点 出点 应用 | `i` / `o` mark from the stage |
-| Split | 分割点 分割 | `s` at the stage position |
+| Trim to source in/out | 入点／出点 → 应用裁切 | `i` / `o` set from the stage and save at once |
+| Split | 位置 → 分割 | `s` at the stage position |
 | Move | 上移 / 下移 | `,` / `.` |
 | Remove | 删除 | `x` (undo restores it) |
-| Speed | 速度选择 + 应用速度 | — |
-| Gain | 增益选择 + 应用增益 | — |
+| Speed | 速度（选择后立即生效） | — |
+| Volume | 音量百分比（选择后立即生效） | — |
 | Undo / redo | 撤销 / 重做 | `u` / `U` |
 
 Source times are seconds in the *material*; captions are positioned on the

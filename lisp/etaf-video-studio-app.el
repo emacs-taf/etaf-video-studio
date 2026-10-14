@@ -357,8 +357,17 @@ ID preserves selection through reordering; a removed clip selects its successor.
              "--yes")
    (lambda (result)
      (etaf-video-studio--after-project app result description)
-     (when (and (plist-get result :ok) (plist-get operation :clip))
-       (etaf-video-studio--sync-clip app (plist-get operation :clip))))))
+     (if (member (plist-get operation :type) '("speed" "gain"))
+         ;; A selector is immediately committed, never an unsaved draft.
+         ;; Read the accepted value after success or restore the last known
+         ;; project value after failure, without erasing pending trim edits.
+         (let* ((speed (equal (plist-get operation :type) "speed"))
+                (clip (etaf-video-studio--app-selected-clip app)))
+           (etaf-set-value (if speed (etaf-video-studio--app-speed-ref app)
+                             (etaf-video-studio--app-gain-ref app))
+                           (or (plist-get clip (if speed :speed :gain)) 1)))
+       (when (and (plist-get result :ok) (plist-get operation :clip))
+         (etaf-video-studio--sync-clip app (plist-get operation :clip)))))))
 
 (defun etaf-video-studio--number-from (ref label)
   "Return REF's value parsed as a number; signal `user-error' naming LABEL."
@@ -402,6 +411,26 @@ ID preserves selection through reordering; a removed clip selects its successor.
                              (etaf-video-state (etaf-video-studio--app-stage-handle app))))))
     (when (and stage state (eq (plist-get stage :kind) 'clip))
       (or (plist-get state :position) 0))))
+
+(defun etaf-video-studio--draft-mark (app edge)
+  "Copy APP's playback position into the trim draft at EDGE, without saving."
+  (let ((position (etaf-video-studio--stage-source-time app)))
+    (unless position (user-error "请先打开所选片段的素材预览"))
+    (etaf-set-value (if (eq edge 'in) (etaf-video-studio--app-trim-in-ref app)
+                     (etaf-video-studio--app-trim-out-ref app))
+                    (format "%.3f" position))))
+
+(defun etaf-video-studio--select-playback (app kind value)
+  "Apply VALUE from APP's KIND selector, restoring the displayed value on error."
+  (let* ((speed (eq kind 'speed))
+         (ref (if speed (etaf-video-studio--app-speed-ref app)
+                (etaf-video-studio--app-gain-ref app)))
+         (old (etaf-value ref)))
+    (etaf-set-value ref value)
+    (condition-case problem
+        (if speed (etaf-video-studio-apply-speed) (etaf-video-studio-apply-gain))
+      (error (etaf-set-value ref old)
+             (signal (car problem) (cdr problem))))))
 
 (defun etaf-video-studio-mark-in ()
   "Set the selected clip's source in point to the stage position."
@@ -462,7 +491,7 @@ ID preserves selection through reordering; a removed clip selects its successor.
     (unless clip (user-error "请先选择一个片段"))
     (etaf-video-studio--send-edit
      app (list :type "gain" :clip (plist-get clip :id) :value value)
-     (format "增益设为 %s" (etaf-video-studio--seconds value)))))
+     (format "音量设为 %s%%" (etaf-video-studio--seconds (* 100 value))))))
 
 (defun etaf-video-studio-move-clip-up ()
   "Move the selected clip one position earlier."

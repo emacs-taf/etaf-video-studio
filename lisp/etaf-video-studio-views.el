@@ -33,6 +33,8 @@
 (declare-function etaf-video-studio-apply-split "etaf-video-studio-app" ())
 (declare-function etaf-video-studio-apply-speed "etaf-video-studio-app" ())
 (declare-function etaf-video-studio-apply-gain "etaf-video-studio-app" ())
+(declare-function etaf-video-studio--draft-mark "etaf-video-studio-app" (app edge))
+(declare-function etaf-video-studio--select-playback "etaf-video-studio-app" (app kind value))
 (declare-function etaf-video-studio-move-clip-up "etaf-video-studio-app" ())
 (declare-function etaf-video-studio-move-clip-down "etaf-video-studio-app" ())
 (declare-function etaf-video-studio-remove-selected-clip "etaf-video-studio-app" ())
@@ -88,8 +90,10 @@
   (if (or (etaf-ref-p value) (etaf-computed-p value)) (etaf-value value) value))
 
 (defun etaf-video-studio--border (color)
-  "Return a one-pixel solid border in COLOR."
-  (list '(px 1) 'solid color))
+  "Return a one-pixel solid border in raw or deferred COLOR."
+  (if (etaf-theme-token-p color)
+      (etaf-theme-token (nth 1 color) (nth 2 color) #'etaf-video-studio--border)
+    (list '(px 1) 'solid color)))
 
 (defun etaf-video-studio--clock (seconds)
   "Format SECONDS as a playback clock."
@@ -181,7 +185,7 @@ are the preview region's budget after allocating the editor and clip list."
   (flex :flex-direction 'row :height '(lh 1) :width 'stretch :align-items 'center
         :gap '((lh 0) (ch 1)) :padding '((lh 0) (ch 1))
         :background-color (etaf-video-studio-color :panel2)
-        :border-bottom (etaf-video-studio--border (etaf-video-studio-color :frame))
+        :border-bottom (etaf-video-studio--border (etaf-video-studio-color :line))
     (etaf-ui-icon :name (or icon 'list) :set 'svg :size 0.9 :min-width 2
                   :color (etaf-video-studio-color :muted))
     (box :height '(lh 1) :font-weight 'bold :color (etaf-video-studio-color :ink)
@@ -460,95 +464,124 @@ are the preview region's budget after allocating the editor and clip list."
 
 ;;; Properties pane
 
-(etaf-define-component etaf-video-studio--properties
-    (&key app state)
-  "Render the selected clip's facts and the explicit editing forms."
+(etaf-define-component etaf-video-studio--inspector-heading (&key title note)
+  "Render an unboxed group caption inside the inspector."
+  :view
+  (flex :width 'stretch :height '(lh 2) :align-items 'center
+    (text :font-weight 'bold (expr title))
+    (box :flex-grow 1 :flex-basis '(ch 0) :min-width '(ch 0))
+    (text :color (etaf-video-studio-color :muted) (expr (or note "")))))
+
+(etaf-define-component etaf-video-studio--inspector-time
+    (&key label value field-ref action-label action-ref on-action disabled)
+  "Align one native time input with its caption and action."
+  :view
+  (flex :width 'stretch :align-items 'center :column-gap '(ch 1)
+    (box :width '(ch 6) :color (etaf-video-studio-color :muted) (text (expr label)))
+    (etaf-text-input :bind value :width '(ch 24) :hide-label t
+                     :label (concat label "（秒）") :ref field-ref)
+    (etaf-button :label action-label :ref action-ref :on-press on-action
+                 :width '(ch 20) :text-align 'center :variant 'secondary
+                 :disabled disabled)))
+
+(etaf-define-component etaf-video-studio--properties (&key app state height)
+  "Render the single-frame inspector with a fixed header and scrolling body."
   :render
   (let* ((clip (plist-get state :clip))
          (index (plist-get state :clip-index))
          (pending (> (or (plist-get state :pending) 0) 0))
-         (clips (etaf-video-studio--app-clips app))
-         (count (length clips)))
+         (count (length (etaf-video-studio--app-clips app)))
+         (height (or height 40))
+         (can-mark (and (not pending)
+                        (eq (plist-get (plist-get state :stage) :kind) 'clip))))
     (etaf-view
-     (flex :flex-direction 'column :width 'stretch :row-gap '(lh 0)
-           :padding '((lh 0) (ch 1))
-           :background-color (etaf-video-studio-color :bg)
-       (etaf-video-studio--section-title :icon 'settings :title "片段剪辑")
-       (box :height '(lh 1))
-       (etaf-video-studio--placeholder
-        :if (null clip)
-        :title "未选择片段" :description "在片段列表中选择一个")
-       (flex :if clip :flex-direction 'column :width 'stretch :row-gap '(lh 0)
-         (etaf-video-studio--fact :label "素材"
-                                  :value (etaf-video-studio--basename (plist-get clip :file)))
-         (etaf-video-studio--fact :label "成片"
-                                  :value (concat (etaf-video-studio--seconds
-                                                  (etaf-video-studio--clip-duration clip))
-                                                 "s"))
-         (box :height '(lh 1) :color (etaf-video-studio-color :muted)
-           (text "原视频保持不变，所有修改都可撤销。"))
-         (box :height '(lh 1))
-         (etaf-video-studio--section-title :icon 'settings :title "保留区间 · 原视频秒数")
-         (box :height '(lh 1) :color (etaf-video-studio-color :muted)
-           (text "入点       出点"))
-         (flex :flex-direction 'row :width 'stretch :align-items 'center
-               :gap '((lh 0) (ch 1))
-           (etaf-text-input :bind (etaf-video-studio--app-trim-in-ref app)
-                            :width '(ch 6) :hide-label t :placeholder "入点"
-                            :ref 'video-studio-trim-in)
-           (etaf-text-input :bind (etaf-video-studio--app-trim-out-ref app)
-                            :width '(ch 6) :hide-label t :placeholder "出点"
-                            :ref 'video-studio-trim-out)
-           (etaf-button :label "应用" :variant 'primary :disabled pending
-                        :ref 'video-studio-trim-apply
-                        :on-press (lambda () (etaf-video-studio-apply-trim))))
-         (flex :flex-direction 'row :width 'stretch :align-items 'center
-               :gap '((lh 0) (ch 1))
-           (etaf-text-input :bind (etaf-video-studio--app-split-ref app)
-                            :width '(ch 7) :hide-label t :placeholder "分割点"
-                            :ref 'video-studio-split-at)
-           (etaf-button :label "分割" :variant 'secondary :disabled pending
-                        :ref 'video-studio-split-apply
-                        :on-press (lambda () (etaf-video-studio-apply-split)))
-           (etaf-button :label "设入点" :variant 'ghost
-                        :disabled (or pending (not (eq (plist-get (plist-get state :stage) :kind) 'clip)))
-                        :ref 'video-studio-mark-in
-                        :on-press (lambda () (etaf-video-studio-mark-in)))
-           (etaf-button :label "设出点" :variant 'ghost
-                        :disabled (or pending (not (eq (plist-get (plist-get state :stage) :kind) 'clip)))
-                        :ref 'video-studio-mark-out
-                        :on-press (lambda () (etaf-video-studio-mark-out))))
-         (flex :flex-direction 'row :width 'stretch :align-items 'center
-               :gap '((lh 0) (ch 1))
-           (etaf-select :bind (etaf-video-studio--app-speed-ref app)
-                        :label "速度" :presentation 'dropdown :ref 'video-studio-speed
-                        :options '((0.5 . "0.5x") (1 . "1x") (2 . "2x") (4 . "4x")))
-           (etaf-button :label "应用速度" :variant 'ghost :disabled pending
-                        :ref 'video-studio-speed-apply
-                        :on-press (lambda () (etaf-video-studio-apply-speed))))
-         (flex :flex-direction 'row :width 'stretch :align-items 'center
-               :gap '((lh 0) (ch 1))
-           (etaf-select :bind (etaf-video-studio--app-gain-ref app)
-                        :label "音量" :presentation 'dropdown :ref 'video-studio-gain
-                        :options '((0.5 . "0.5") (0.7 . "0.7") (1 . "1") (1.5 . "1.5")))
-           (etaf-button :label "应用音量" :variant 'ghost :disabled pending
-                        :ref 'video-studio-gain-apply
-                        :on-press (lambda () (etaf-video-studio-apply-gain))))
-         (box :height '(lh 1))
-         (flex :flex-direction 'row :width 'stretch :align-items 'center
-               :justify-content 'end :gap '((lh 0) (ch 1))
-           (etaf-button :label "上移" :variant 'ghost
-                        :disabled (or pending (not index) (<= index 0))
-                        :ref 'video-studio-move-up
-                        :on-press (lambda () (etaf-video-studio-move-clip-up)))
-           (etaf-button :label "下移" :variant 'ghost
-                        :disabled (or pending (not index) (>= (1+ (or index 0)) count))
-                        :ref 'video-studio-move-down
-                        :on-press (lambda () (etaf-video-studio-move-clip-down)))
-           (etaf-button :label "删除" :variant 'ghost
-                        :disabled (or pending (not clip))
-                        :ref 'video-studio-remove-clip
-                        :on-press (lambda () (etaf-video-studio-remove-selected-clip)))))))))
+     (etaf-panel :ref 'video-studio-inspector :width 'stretch
+                  :height (list 'lh height) :padding '((lh 0) (ch 0))
+                  :item-gap '(lh 0) :border-radius '(px 16) :overflow 'hidden
+       (flex :height '(lh 3) :width 'stretch :align-items 'center :column-gap '(ch 2)
+             :padding '((lh 1) (ch 3)) :background-color (etaf-video-studio-color :panel2)
+             :border-bottom (etaf-video-studio--border (etaf-video-studio-color :line))
+         (etaf-ui-icon :name 'play :set 'svg :size 1 :min-width 2
+                       :color (etaf-video-studio-color :accent))
+         (text :font-weight 'bold "片段剪辑")
+         (box :flex-grow 1 :flex-basis '(ch 0) :min-width '(ch 0))
+         (text :color (etaf-video-studio-color :muted)
+           (expr (format "%02d / %02d" (if index (1+ index) 0) count))))
+       (box :ref 'video-studio-inspector-body :height (list 'lh (max 1 (- height 6)))
+            :width 'stretch :overflow 'scroll
+         (column :padding '((lh 1) (ch 3)) :item-gap '(lh 0)
+           (etaf-video-studio--placeholder :if (null clip)
+                                          :title "未选择片段" :description "在片段列表中选择一个")
+           (column :if clip :item-gap '(lh 0)
+             (box :height '(lh 1) :overflow 'hidden :help-echo (plist-get clip :file)
+                  :font-weight 'bold
+               (text (expr (etaf-video-studio--basename (plist-get clip :file)))))
+             (flex :width 'stretch :height '(lh 2) :align-items 'center
+               (text :color (etaf-video-studio-color :muted)
+                 (expr (format "时长 %s 秒" (etaf-video-studio--seconds
+                                           (etaf-video-studio--clip-duration clip)))))
+               (box :flex-grow 1 :flex-basis '(ch 0) :min-width '(ch 0))
+               (text :color (etaf-video-studio-color :muted) "原视频保持不变"))
+             (box :height '(lh 1) :border-bottom (etaf-video-studio--border (etaf-video-studio-color :line)))
+             (etaf-video-studio--inspector-heading :title "裁切" :note "时间单位：秒")
+             (etaf-video-studio--inspector-time
+              :label "入点" :value (etaf-video-studio--app-trim-in-ref app)
+              :field-ref 'video-studio-trim-in :action-label "取当前播放位置"
+              :action-ref 'video-studio-mark-in :disabled (not can-mark)
+              :on-action (lambda () (etaf-video-studio--draft-mark app 'in)))
+             (box :height '(lh 1))
+             (etaf-video-studio--inspector-time
+              :label "出点" :value (etaf-video-studio--app-trim-out-ref app)
+              :field-ref 'video-studio-trim-out :action-label "取当前播放位置"
+              :action-ref 'video-studio-mark-out :disabled (not can-mark)
+              :on-action (lambda () (etaf-video-studio--draft-mark app 'out)))
+             (box :height '(lh 1))
+             (flex :width 'stretch :align-items 'center
+               (text :color (etaf-video-studio-color :muted) "保留入点与出点之间的内容")
+               (box :flex-grow 1 :flex-basis '(ch 0) :min-width '(ch 0))
+               (etaf-button :label "应用裁切" :width '(ch 20) :text-align 'center
+                            :variant 'primary :disabled pending
+                            :ref 'video-studio-trim-apply :on-press #'etaf-video-studio-apply-trim))
+             (box :height '(lh 2) :border-bottom (etaf-video-studio--border (etaf-video-studio-color :line)))
+             (etaf-video-studio--inspector-heading :title "分割")
+             (etaf-video-studio--inspector-time
+              :label "位置" :value (etaf-video-studio--app-split-ref app)
+              :field-ref 'video-studio-split-at :action-label "分割片段"
+              :action-ref 'video-studio-split-apply :disabled pending
+              :on-action #'etaf-video-studio-apply-split)
+             (box :height '(lh 2) :border-bottom (etaf-video-studio--border (etaf-video-studio-color :line)))
+             (etaf-video-studio--inspector-heading :title "播放调整")
+             (flex :width 'stretch :align-items 'center :column-gap '(ch 1)
+               (box :width '(ch 6) :color (etaf-video-studio-color :muted) (text "速度"))
+               (etaf-select :value (etaf-video-studio--app-speed-ref app)
+                            :on-change (lambda (value) (etaf-video-studio--select-playback app 'speed value))
+                            :disabled pending :label "播放速度" :hide-label t :presentation 'dropdown
+                            :ref 'video-studio-speed :width '(ch 20)
+                            :options '((0.5 . "0.5×") (1 . "1.0×") (2 . "2.0×") (4 . "4.0×"))))
+             (box :height '(lh 1))
+             (flex :width 'stretch :align-items 'center :column-gap '(ch 1)
+               (box :width '(ch 6) :color (etaf-video-studio-color :muted) (text "音量"))
+               (etaf-select :value (etaf-video-studio--app-gain-ref app)
+                            :on-change (lambda (value) (etaf-video-studio--select-playback app 'gain value))
+                            :disabled pending :label "音量百分比" :hide-label t :presentation 'dropdown
+                            :ref 'video-studio-gain :width '(ch 20)
+                            :options '((0.5 . "50%") (0.7 . "70%") (1 . "100%") (1.5 . "150%"))))
+             (box :height '(lh 2) :padding '((lh 1) (ch 0)) :color (etaf-video-studio-color :muted)
+               (text "选择后生效，可撤销")))))
+       (flex :height '(lh 3) :width 'stretch :align-items 'center :column-gap '(ch 2)
+             :padding '((lh 1) (ch 3))
+             :border-top (etaf-video-studio--border (etaf-video-studio-color :line))
+         (etaf-button :label "↑ 上移" :variant 'ghost :padding '((lh 0) (ch 0))
+                      :disabled (or pending (not index) (<= index 0))
+                      :ref 'video-studio-move-up :on-press #'etaf-video-studio-move-clip-up)
+         (etaf-button :label "↓ 下移" :variant 'ghost :padding '((lh 0) (ch 0))
+                      :disabled (or pending (not index) (>= (1+ (or index 0)) count))
+                      :ref 'video-studio-move-down :on-press #'etaf-video-studio-move-clip-down)
+         (box :flex-grow 1 :flex-basis '(ch 0) :min-width '(ch 0))
+         (etaf-button :label "删除片段" :variant 'ghost :padding '((lh 0) (ch 0))
+                      :color (etaf-video-studio-color :danger)
+                      :disabled (or pending (null clip)) :help-echo "删除此片段；可以撤销"
+                      :ref 'video-studio-remove-clip :on-press #'etaf-video-studio-remove-selected-clip))))))
 
 ;;; Captions pane
 
@@ -972,11 +1005,12 @@ are the preview region's budget after allocating the editor and clip list."
           (intern (format "etaf-video-studio--%s" kind))
           (append (list :state (etaf-value projection))
                   (unless (memq kind '(header footer)) (list :app app))
+                  (when (eq kind 'properties) (list :height height))
                   (when (eq kind 'preview)
                     (list :width (and width (- width (* 2 (frame-char-width)) 2))
                           :height (and height (- height 2)))))
           nil)))
-    (if (memq kind '(preview clips properties captions record publish tasks))
+    (if (memq kind '(preview clips captions record publish tasks))
         (etaf-node 'etaf-panel
                    (append (list :width 'stretch :padding '((lh 0.5) (ch 1))
                                  :item-gap '(lh 0))
@@ -991,7 +1025,6 @@ are the preview region's budget after allocating the editor and clip list."
         :padding '((lh 1) (ch 2))
     (flex :flex-direction 'column :width '(ch 64) :max-width '(% 100)
           :padding '((lh 1) (ch 2)) :background-color (etaf-video-studio-color :panel)
-          :border (etaf-video-studio--border (etaf-video-studio-color :frame))
       (box :height '(lh 1) :font-weight 'bold :color (etaf-video-studio-color :ink)
         (text "从一段素材，做成一支视频"))
       (box :height '(lh 1))
@@ -1053,7 +1086,7 @@ are the preview region's budget after allocating the editor and clip list."
                      (>= body-rows 22)))
          (timeline (and split (plist-get state :has-clips) (>= body-rows 28)))
          (aside (if (memq pane '(preview clips)) 'properties pane))
-         (main-width (- width (if split (* 44 (frame-char-width)) 0))))
+         (main-width (- width (if split (* 64 (frame-char-width)) 0))))
     (etaf-view
      (box :position 'relative :width (list 'px width) :height (list 'lh rows)
           :background-color (etaf-video-studio-color :bg)
@@ -1089,7 +1122,6 @@ are the preview region's budget after allocating the editor and clip list."
        (box :position 'absolute :top '(lh 2) :left '(ch 1)
             :width (list 'px (- width (* 2 (frame-char-width)))) :height '(lh 3)
             :padding '((lh 1) (ch 1))
-            :border (etaf-video-studio--border (etaf-video-studio-color :frame))
             :background-color (etaf-video-studio-color :panel)
          (etaf-video-studio--region :app app :kind 'toolbar))
        (box :position 'absolute :top '(lh 6) :left '(ch 2)
@@ -1119,7 +1151,7 @@ are the preview region's budget after allocating the editor and clip list."
              (box :width '(ch 70) :max-width '(% 100)
                (etaf-video-studio--region :key pane :app app :kind pane :height body-rows))))
          (box :if split :position 'absolute :left (list 'px main-width) :top '(lh 0)
-              :width '(ch 44) :height (list 'lh body-rows) :padding '((lh 0) (ch 1))
+              :width '(ch 64) :height (list 'lh body-rows) :padding '((lh 0) (ch 1))
               :region (list :id 'video-studio-details :label "编辑区" :key ?d)
            (etaf-video-studio--region
             :key (if (and (eq pane 'clips) (not timeline)) 'clips aside)

@@ -828,5 +828,33 @@ The field's value must be empty or already the desired prefix."
       (should (string-match-p "添加你的第一段素材" body))
       (should-not (string-match-p "片段 (0)" body)))))
 
+(ert-deftest etaf-video-studio-tests-fractional-times-stay-with-their-labels ()
+  "Minute, hour and day-scale times stay on the same visible row as their labels."
+  (etaf-video-studio-tests--with-app ()
+    (dolist (duration '(60.183 3600.123 86400.123))
+      (etaf-video-studio-tests--write
+       "status.json"
+       (etaf-video-studio-tests--project
+        :plan (list :clips (list (etaf-video-studio-tests--clip :out duration)))))
+      (etaf-video-studio-open-project "video-1")
+      (etaf-video-studio-tests--settle (current-buffer))
+      (dolist (size '((1600 . 50) (800 . 28)))
+        (etaf-runtime-refit (etaf-runtime-for-buffer (current-buffer)) (car size) (cdr size))
+        (let ((runtime (etaf-runtime-for-buffer (current-buffer))))
+          ;; Short viewports scroll the body rather than compressing fields.
+          ;; Each focused control must reveal its complete label and value.
+          (dolist (field `((video-studio-trim-out "出点" ,(format "%.3f" duration))
+                           (video-studio-split-at "位置" ,(format "%.3f" (/ duration 2.0)))
+                           (video-studio-gain "音量" "100%")))
+            (etaf-focus runtime (car field))
+            (let ((body (etaf-video-studio-tests--body (current-buffer))))
+              (should (string-match-p
+                       (concat (cadr field) "[^\n]*" (regexp-quote (caddr field))) body))
+              (should (string-match-p "片段剪辑" body))
+              (should (string-match-p "删除片段" body))))
+          (etaf-focus runtime 'video-studio-trim-apply)
+          (should (string-match-p "应用裁切"
+                                  (etaf-video-studio-tests--body (current-buffer)))))))))
+
 (provide 'etaf-video-studio-tests)
 ;;; etaf-video-studio-tests.el ends here

@@ -106,11 +106,22 @@ the application palette rather than exposing the user's frame background.
 The shell budgets eight rows for its title, framed action bar and persistent
 tabs, then four for a padded status/key footer. The remaining region shows the
 welcome card or the selected tool. At 1100 logical pixels and 34 viewport
-rows it splits into a framed preview and a 44-cell editor; from 40 rows,
+rows it splits into a framed preview and a 64-cell inspector; from 40 rows,
 a nonempty clip sequence has its own eleven-row panel below the preview.
 Empty projects show only the preview's onboarding, not a second empty list. Width alone never
 forces an unusable split in a short window. Lists page five rows, keeping
 forms and page controls reachable instead of clipping long collections.
+
+The clip inspector is one framed panel with a rounded outline: a three-row
+title band, a scrolling body and a fixed footer holding the ordering and
+delete actions. Groups inside the body are separated by hairline rules rather
+than nested frames, and every control keeps one standard row with a plain
+filled surface, so a short window scrolls the body instead of compressing
+labels; focusing a control scrolls it into view. Trim and split are separate
+groups with fourteen-cell value fields whose width includes input padding, so
+fractional source times remain intact. 取当前播放位置 fills a time field as a
+draft and 应用裁切 saves both fields; choosing a speed or volume option
+applies that edit at once and reports its result in the status line.
 The video canvas derives its aspect from the source and its size from the
 remaining row and column budget. The supported minimum is 80×28; smaller
 viewports retain that structure with deliberate clipping.

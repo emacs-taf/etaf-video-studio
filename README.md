@@ -39,7 +39,8 @@ different library, or call
 2. Choose **导入素材**, or **录屏** and a window. Recording is silent unless
    you explicitly select audio; stopping imports the saved video.
 3. Select a clip. Use the seek bar and play/pause, then edit its in/out
-   seconds or split it. The **字幕** tab adds timed text. Changes save
+   seconds or split it; speed and volume apply as soon as you choose them.
+   The **字幕** tab adds timed text. Changes save
    automatically; **撤销** restores the previous edit without touching sources.
 4. Choose **预览成片** to render the edited cut, then **导出视频**. The
    **任务** and **导出** tabs show completion and **在文件夹中显示成片**.

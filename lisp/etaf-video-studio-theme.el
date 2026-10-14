@@ -15,6 +15,7 @@
 ;;; Code:
 
 (require 'cl-lib)
+(require 'etaf)
 
 (defconst etaf-video-studio-palettes
   '((dark
@@ -31,7 +32,7 @@
      (:accent-soft . "#16324f")
      (:accent-fg . "#ffffff")
      (:border . "#2c3644")
-     (:frame . "#728299")
+     (:frame . "#39455a")
      (:line . "#232c39")
      (:ok . "#4cc38a")
      (:ok-bg . "#123528")
@@ -42,20 +43,20 @@
      (:info . "#7aa2f7")
      (:info-bg . "#1b2a46"))
     (light
-     (:bg . "#f4f6f9")
+     (:bg . "#eef2f7")
      (:panel . "#ffffff")
-     (:panel2 . "#eef1f5")
+     (:panel2 . "#eaf0f7")
      (:panel3 . "#e2e8f0")
      (:hover . "#d7e1ec")
      (:stage . "#10141a")
-     (:ink . "#1a2230")
+     (:ink . "#263750")
      (:muted . "#5b6779")
      (:dim . "#8a95a6")
-     (:accent . "#2f6fe4")
-     (:accent-soft . "#dce7fa")
+     (:accent . "#3b68b3")
+     (:accent-soft . "#edf3fc")
      (:accent-fg . "#ffffff")
      (:border . "#ccd5e0")
-     (:frame . "#78869b")
+     (:frame . "#c3cedd")
      (:line . "#dde4ec")
      (:ok . "#1f8a53")
      (:ok-bg . "#dcf3e6")
@@ -71,14 +72,16 @@
   "Appearance of the application: `dark' (default) or `light'.")
 
 (defun etaf-video-studio-color (key &optional mode)
-  "Return the palette color for KEY in MODE, defaulting to the current one.
-An unknown KEY falls back to the foreground color, so a view can never
-crash on a typo; the fallback still follows the active appearance."
-  (let* ((mode (or mode etaf-video-studio-theme-mode))
-         (palette (or (alist-get mode etaf-video-studio-palettes)
-                      (alist-get 'dark etaf-video-studio-palettes))))
-    (or (alist-get key palette)
-        (alist-get :ink palette))))
+  "Return KEY's raw color for explicit MODE, or a deferred Theme token.
+Views keep the deferred value so retained Hosts follow palette changes
+without relying on an unrelated snapshot projection being invalidated."
+  (let* ((palette (or (alist-get (or mode etaf-video-studio-theme-mode)
+                                etaf-video-studio-palettes)
+                      (alist-get 'dark etaf-video-studio-palettes)))
+         (color (or (alist-get key palette) (alist-get :ink palette))))
+    (if mode color
+      (etaf-theme-token (intern (concat ":video-studio-" (substring (symbol-name key) 1)))
+                        color))))
 
 (defun etaf-video-studio-theme-defaults (&optional mode)
   "Return the ETAF UI token plist for MODE (default the current mode).
@@ -100,7 +103,11 @@ selects are exercised by this app, so every relevant catalog token is set."
          (accent-soft (funcall c :accent-soft))
          (border (funcall c :border))
          (line (funcall c :line)))
-    (list
+    (append
+     (cl-loop for (key . color) in (alist-get mode etaf-video-studio-palettes)
+              append (list (intern (concat ":video-studio-" (substring (symbol-name key) 1)))
+                           color))
+     (list
      ;; Page, text and structure.
      :ui-fg ink
      :ui-bg bg
@@ -124,7 +131,12 @@ selects are exercised by this app, so every relevant catalog token is set."
      :ui-button-ghost-hover-bg panel3
      :ui-checkbox-enabled-fg ink
      :ui-checkbox-disabled-fg dim
-     ;; Fields, pickers and search.
+     ;; Fields, pickers and search.  Outlined fields are flat filled
+     ;; surfaces: no outline, no radius, one standard row.
+     :ui-input-padding '((lh 0) (ch 2))
+     :ui-input-radius '(px 0)
+     :ui-input-bg panel2
+     :ui-input-border panel2
      :ui-search-bg panel3
      :ui-search-fg ink
      :ui-picker-item-bg panel2
@@ -178,7 +190,7 @@ selects are exercised by this app, so every relevant catalog token is set."
      :ui-playing-card-empty-bg panel3
      :ui-playing-card-empty-fg dim
      :ui-playing-card-selected-bg accent-soft
-     :ui-playing-card-hover-bg hover)))
+     :ui-playing-card-hover-bg hover))))
 
 (defun etaf-video-studio--mix (from to amount)
   "Return FROM mixed AMOUNT of the way toward TO.

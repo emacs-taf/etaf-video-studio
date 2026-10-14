@@ -8,6 +8,13 @@ All notable changes to this project are documented here, following
 
 ### Changed
 
+- Redesign the clip inspector as one framed panel: a title band, a scrolling
+  body and a fixed footer with 上移／下移 and 删除. Controls stay one standard
+  row with plain filled surfaces instead of bordered boxes, groups are
+  separated by hairlines, and a short window scrolls the body while keeping
+  the header and footer reachable. 取当前播放位置 fills a draft that 应用裁切
+  saves, and speed or volume applies as soon as it is chosen.
+
 - Give the action bar, preview, clip sequence and editing tools visible
   enclosing borders and separated title bars in both palettes. Empty projects
   no longer reserve a second empty clip panel, and resize gaps keep the app's
@@ -21,6 +28,10 @@ All notable changes to this project are documented here, following
   revealed directly in the file manager from the export or task view.
 
 ### Fixed
+
+- Align the clip editor's labels, values and actions in separate trim, split
+  and playback groups. Widen time fields for fractional-second source times;
+  display volume as a percentage and separate deletion from edit actions.
 
 - Source playback now seeks to the actual clip in point, and marks use the
   source clock without adding the in point a second time.

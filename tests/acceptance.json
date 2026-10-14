@@ -11,6 +11,11 @@
   "support": [],
   "cases": [
     {
+      "name": "etaf-video-studio-tests-fractional-times-stay-with-their-labels",
+      "file": "tests/etaf-video-studio-tests.el",
+      "purpose": "Fractional-second in/out and split fields retain complete single-line values beside their labels in wide and short viewports; volume is readable as a percentage."
+    },
+    {
       "name": "etaf-video-studio-tests-empty-workspace-has-one-material-prompt",
       "file": "tests/etaf-video-studio-tests.el",
       "purpose": "An empty wide project offers one material-onboarding region without reserving a duplicate empty clip panel."
