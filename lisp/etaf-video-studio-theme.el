@@ -31,6 +31,7 @@
      (:accent-soft . "#16324f")
      (:accent-fg . "#ffffff")
      (:border . "#2c3644")
+     (:frame . "#728299")
      (:line . "#232c39")
      (:ok . "#4cc38a")
      (:ok-bg . "#123528")
@@ -54,6 +55,7 @@
      (:accent-soft . "#dce7fa")
      (:accent-fg . "#ffffff")
      (:border . "#ccd5e0")
+     (:frame . "#78869b")
      (:line . "#dde4ec")
      (:ok . "#1f8a53")
      (:ok-bg . "#dcf3e6")
@@ -107,7 +109,7 @@ selects are exercised by this app, so every relevant catalog token is set."
      :ui-divider-bg line
      :ui-panel-fg ink
      :ui-panel-bg panel
-     :ui-panel-border border
+     :ui-panel-border (funcall c :frame)
      ;; Buttons and selection controls.
      :ui-accent accent
      :ui-accent-fg (funcall c :accent-fg)

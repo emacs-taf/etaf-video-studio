@@ -11,6 +11,11 @@
   "support": [],
   "cases": [
     {
+      "name": "etaf-video-studio-tests-empty-workspace-has-one-material-prompt",
+      "file": "tests/etaf-video-studio-tests.el",
+      "purpose": "An empty wide project offers one material-onboarding region without reserving a duplicate empty clip panel."
+    },
+    {
       "name": "etaf-video-studio-tests-wide-tool-switch-keeps-controls-live",
       "file": "tests/etaf-video-studio-tests.el",
       "purpose": "After switching a wide editor from clips to captions, the selected cue's visible delete control remains enabled and sends its exact operation."

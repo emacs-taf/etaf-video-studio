@@ -97,11 +97,18 @@ internal.
 
 ## Layout and sizing
 
-The shell budgets seven rows for its title, action bar and persistent tabs,
-then four for a padded status/key footer. The remaining region shows the
-welcome card or the selected tool. At 1100 logical pixels and 33 viewport
-rows it splits into a preview and a 44-cell editor; from 39 rows the preview
-also leaves nine rows for the ordered clip sequence. Width alone never
+Every major work area has a continuous visible frame, a separated title bar
+and consistent inset spacing, using the catalog's Panel and the theme's
+frame colour. Near-identical fills or whitespace alone are not region
+boundaries. The canvas includes an explicit background plane so gaps retain
+the application palette rather than exposing the user's frame background.
+
+The shell budgets eight rows for its title, framed action bar and persistent
+tabs, then four for a padded status/key footer. The remaining region shows the
+welcome card or the selected tool. At 1100 logical pixels and 34 viewport
+rows it splits into a framed preview and a 44-cell editor; from 40 rows,
+a nonempty clip sequence has its own eleven-row panel below the preview.
+Empty projects show only the preview's onboarding, not a second empty list. Width alone never
 forces an unusable split in a short window. Lists page five rows, keeping
 forms and page controls reachable instead of clipping long collections.
 The video canvas derives its aspect from the source and its size from the

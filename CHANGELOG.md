@@ -8,6 +8,11 @@ All notable changes to this project are documented here, following
 
 ### Changed
 
+- Give the action bar, preview, clip sequence and editing tools visible
+  enclosing borders and separated title bars in both palettes. Empty projects
+  no longer reserve a second empty clip panel, and resize gaps keep the app's
+  background instead of exposing the surrounding Emacs theme.
+
 - Start with a guided project card and persistent workflow actions. The same
   tool tabs remain visible in wide, compact and short windows; the usable
   minimum is now 80×28 cells. Project, clip, caption, target and task lists

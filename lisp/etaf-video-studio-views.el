@@ -148,9 +148,9 @@ are the preview region's budget after allocating the editor and clip list."
   (let* ((cell-width (max 1 (frame-char-width)))
          (cell-height (max 1 (frame-char-height)))
          (reserved-ch 6)
-         (reserved-rows 10)
+         (reserved-rows 6)
          (center-ch (max 16 (- (floor viewport-width cell-width) reserved-ch)))
-         (available-rows (max 5 (- viewport-rows reserved-rows)))
+         (available-rows (max 3 (- viewport-rows reserved-rows)))
          (aspect (if (and (consp aspect) (numberp (car aspect)) (numberp (cdr aspect))
                           (> (car aspect) 0) (> (cdr aspect) 0))
                      aspect (cons 16 9)))
@@ -179,7 +179,9 @@ are the preview region's budget after allocating the editor and clip list."
   "Render one section caption with an optional ghost action button."
   :view
   (flex :flex-direction 'row :height '(lh 1) :width 'stretch :align-items 'center
-        :gap '((lh 0) (ch 1))
+        :gap '((lh 0) (ch 1)) :padding '((lh 0) (ch 1))
+        :background-color (etaf-video-studio-color :panel2)
+        :border-bottom (etaf-video-studio--border (etaf-video-studio-color :frame))
     (etaf-ui-icon :name (or icon 'list) :set 'svg :size 0.9 :min-width 2
                   :color (etaf-video-studio-color :muted))
     (box :height '(lh 1) :font-weight 'bold :color (etaf-video-studio-color :ink)
@@ -965,12 +967,22 @@ are the preview region's budget after allocating the editor and clip list."
          (cl-loop for key in keys append (list key (plist-get snapshot key)))))
      :test #'equal)))
   :render
-  (etaf-node
-   (intern (format "etaf-video-studio--%s" kind))
-   (append (list :state (etaf-value projection))
-           (unless (memq kind '(header footer)) (list :app app))
-           (when (eq kind 'preview) (list :width width :height height)))
-   nil))
+  (let ((content
+         (etaf-node
+          (intern (format "etaf-video-studio--%s" kind))
+          (append (list :state (etaf-value projection))
+                  (unless (memq kind '(header footer)) (list :app app))
+                  (when (eq kind 'preview)
+                    (list :width (and width (- width (* 2 (frame-char-width)) 2))
+                          :height (and height (- height 2)))))
+          nil)))
+    (if (memq kind '(preview clips properties captions record publish tasks))
+        (etaf-node 'etaf-panel
+                   (append (list :width 'stretch :padding '((lh 0.5) (ch 1))
+                                 :item-gap '(lh 0))
+                           (when height (list :height (list 'lh height))))
+                   (list content))
+      content)))
 
 (etaf-define-component etaf-video-studio--welcome (&key app state)
   "Make the first useful action the centre of the empty workspace."
@@ -979,6 +991,7 @@ are the preview region's budget after allocating the editor and clip list."
         :padding '((lh 1) (ch 2))
     (flex :flex-direction 'column :width '(ch 64) :max-width '(% 100)
           :padding '((lh 1) (ch 2)) :background-color (etaf-video-studio-color :panel)
+          :border (etaf-video-studio--border (etaf-video-studio-color :frame))
       (box :height '(lh 1) :font-weight 'bold :color (etaf-video-studio-color :ink)
         (text "从一段素材，做成一支视频"))
       (box :height '(lh 1))
@@ -1023,7 +1036,8 @@ are the preview region's budget after allocating the editor and clip list."
                     (lambda ()
                       (let ((snapshot (etaf-value (etaf-video-studio--app-data-ref app))))
                         (list :pane (plist-get snapshot :pane)
-                              :project (and (plist-get snapshot :project) t))))
+                              :project (and (plist-get snapshot :project) t)
+                              :has-clips (and (etaf-video-studio--app-clips app) t))))
                     :test #'equal)))
   :setup
   (etaf-theme-provide theme)
@@ -1032,12 +1046,12 @@ are the preview region's budget after allocating the editor and clip list."
          (viewport (etaf-runtime-viewport))
          (width (max (* 80 (frame-char-width)) (or (car viewport) 800)))
          (rows (max 28 (or (cdr viewport) 30)))
-         (body-rows (- rows 11))
+         (body-rows (- rows 12))
          (pane (or (plist-get state :pane) 'projects))
          (home (or (null (plist-get state :project)) (eq pane 'projects)))
          (split (and (not home) (>= width etaf-video-studio--aside-min-pixels)
                      (>= body-rows 22)))
-         (timeline (and split (>= body-rows 28)))
+         (timeline (and split (plist-get state :has-clips) (>= body-rows 28)))
          (aside (if (memq pane '(preview clips)) 'properties pane))
          (main-width (- width (if split (* 44 (frame-char-width)) 0))))
     (etaf-view
@@ -1066,41 +1080,51 @@ are the preview region's budget after allocating the editor and clip list."
                  (list "p" #'etaf-video-studio-show-publish "导出与发布")
                  (list "t" #'etaf-video-studio-show-tasks "后台任务")
                  (list "T" #'etaf-video-studio-toggle-theme "切换主题"))
+       (box :position 'absolute :left '(px 0) :top '(lh 0)
+            :width (list 'px width) :height (list 'lh rows)
+            :background-color (etaf-video-studio-color :bg))
        (box :position 'absolute :top '(lh 1) :left '(ch 2)
             :width (list 'px (- width (* 4 (frame-char-width)))) :height '(lh 1)
          (etaf-video-studio--region :app app :kind 'header))
-       (box :position 'absolute :top '(lh 3) :left '(ch 2)
-            :width (list 'px (- width (* 4 (frame-char-width)))) :height '(lh 1)
+       (box :position 'absolute :top '(lh 2) :left '(ch 1)
+            :width (list 'px (- width (* 2 (frame-char-width)))) :height '(lh 3)
+            :padding '((lh 1) (ch 1))
+            :border (etaf-video-studio--border (etaf-video-studio-color :frame))
+            :background-color (etaf-video-studio-color :panel)
          (etaf-video-studio--region :app app :kind 'toolbar))
-       (box :position 'absolute :top '(lh 5) :left '(ch 2)
+       (box :position 'absolute :top '(lh 6) :left '(ch 2)
             :width (list 'px (- width (* 4 (frame-char-width)))) :height '(lh 1)
          (etaf-tabs :items (etaf-video-studio--pane-tabs state nil)
                     :active (if home 'projects pane)
                     :on-change (lambda (key) (etaf-video-studio-select-pane key))))
-       (box :position 'absolute :top '(lh 7) :left '(px 0)
+       (box :position 'absolute :top '(lh 8) :left '(px 0)
             :width (list 'px width) :height (list 'lh body-rows) :overflow 'hidden
          (etaf-video-studio--region :if home :app app :kind 'welcome)
-         (box :if (not home) :width (list 'px main-width) :height (list 'lh body-rows)
+         (box :if (not home) :position 'relative
+              :width (list 'px main-width) :height (list 'lh body-rows)
               :region (list :id 'video-studio-preview :label "预览与片段" :key ?v)
-           (etaf-video-studio--region
-            :if (or split (eq pane 'preview)) :app app :kind 'preview
-            :width main-width :height (- body-rows (if timeline 10 0)))
-           (box :if timeline :position 'absolute :top (list 'lh (- body-rows 9))
-                :left '(ch 2) :width (list 'px (- main-width (* 4 (frame-char-width))))
-                :height '(lh 9) :overflow 'hidden
-             (etaf-video-studio--region :app app :kind 'clips))
+           (box :if (or split (eq pane 'preview)) :position 'absolute
+                :left '(ch 1) :top '(lh 0)
+                :width (list 'px (- main-width (* 2 (frame-char-width))))
+                :height (list 'lh (- body-rows (if timeline 12 0)))
+             (etaf-video-studio--region :app app :kind 'preview
+                                       :width (- main-width (* 2 (frame-char-width)))
+                                       :height (- body-rows (if timeline 12 0))))
+           (box :if timeline :position 'absolute :top (list 'lh (- body-rows 11))
+                :left '(ch 1) :width (list 'px (- main-width (* 2 (frame-char-width))))
+                :height '(lh 11) :overflow 'hidden
+             (etaf-video-studio--region :app app :kind 'clips :height 11))
            (flex :if (and (not split) (not (eq pane 'preview)))
                  :flex-direction 'column :width 'stretch :align-items 'center
              (box :width '(ch 70) :max-width '(% 100)
-               (etaf-video-studio--region :key pane :app app :kind pane))))
+               (etaf-video-studio--region :key pane :app app :kind pane :height body-rows))))
          (box :if split :position 'absolute :left (list 'px main-width) :top '(lh 0)
               :width '(ch 44) :height (list 'lh body-rows) :padding '((lh 0) (ch 1))
-              :background-color (etaf-video-studio-color :panel)
-              :border-left (etaf-video-studio--border (etaf-video-studio-color :line))
               :region (list :id 'video-studio-details :label "编辑区" :key ?d)
            (etaf-video-studio--region
             :key (if (and (eq pane 'clips) (not timeline)) 'clips aside)
-            :app app :kind (if (and (eq pane 'clips) (not timeline)) 'clips aside))))
+            :app app :height body-rows
+            :kind (if (and (eq pane 'clips) (not timeline)) 'clips aside))))
        (box :position 'absolute :left '(px 0) :top (list 'lh (- rows 4))
             :width (list 'px width) :height '(lh 4) :padding '((lh 1) (ch 2))
             :overflow 'hidden :background-color (etaf-video-studio-color :panel2)

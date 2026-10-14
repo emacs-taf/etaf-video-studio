@@ -801,7 +801,7 @@ With CONFIRM, include the preview revision and `--yes'."
                 (runtime (etaf-runtime-for-buffer (current-buffer)))
                 (viewport (etaf-runtime-viewport runtime)))
       (when (or (< (car viewport) etaf-video-studio--aside-min-pixels)
-                (< (cdr viewport) 33))
+                (< (cdr viewport) 34))
         ;; A single-pane layout unmounts its video while another tool is open.
         (setf (plist-get stage :positioned) nil)))
     (setf (etaf-video-studio--app-pane app) pane)

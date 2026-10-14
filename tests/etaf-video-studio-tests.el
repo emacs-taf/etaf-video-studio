@@ -817,5 +817,16 @@ The field's value must be empty or already the desired prefix."
       (should (equal "cue-1" (plist-get operation :id)))
       (should (plist-get operation :remove)))))
 
+(ert-deftest etaf-video-studio-tests-empty-workspace-has-one-material-prompt ()
+  "An empty wide project has one material prompt, not two competing empty panes."
+  (etaf-video-studio-tests--with-app ()
+    (etaf-video-studio-tests--write "status.json" (etaf-video-studio-tests--project))
+    (etaf-video-studio-open-project "video-1")
+    (etaf-video-studio-tests--settle (current-buffer))
+    (etaf-runtime-refit (etaf-runtime-for-buffer (current-buffer)) 1600 50)
+    (let ((body (etaf-video-studio-tests--body (current-buffer))))
+      (should (string-match-p "添加你的第一段素材" body))
+      (should-not (string-match-p "片段 (0)" body)))))
+
 (provide 'etaf-video-studio-tests)
 ;;; etaf-video-studio-tests.el ends here

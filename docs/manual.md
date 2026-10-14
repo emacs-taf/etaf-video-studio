@@ -125,10 +125,12 @@ retries it automatically.
 
 ## Layout and keys
 
-The action bar always exposes import, recording, undo/redo, preview and export.
-The same eight tabs remain visible at every supported size. With at least
-1100 logical pixels and 33 viewport rows, the preview sits beside the editor;
-from 39 rows the ordered clip list also appears below it. Smaller or shorter
+The framed action bar always exposes import, recording, undo/redo, preview and
+export. Preview, clip sequence and editing tools each have a visible enclosing
+border and a separated title bar in both themes. The same eight tabs remain
+visible at every supported size. With at least 1100 logical pixels and 34
+viewport rows, the preview sits beside the editor; from 40 rows a nonempty
+ordered clip list also appears in its own panel below it. Smaller or shorter
 windows show one tool at a time. 项目 always opens the project card instead
 of reserving an empty sidebar, and 任务 occupies space only when selected.
 The minimum usable viewport is 80 columns by 28 rows; below that the layout
