@@ -23,11 +23,12 @@
 ;; installed and `ffmpeg' must provide libass for burned-in captions.
 ;;
 ;; A session is one buffer (`*Video Studio*') showing one project.  The
-;; shell has a project and clip sidebar, a native `etaf-video' preview of a
-;; clip or of the rendered preview, a details column with the clip facts and
-;; the explicit edit forms, and panes for captions, recording, publishing
-;; and tasks.  Wide windows show all three columns; narrow ones switch the
-;; main area through the pane tabs, so no feature is hidden.  Every editing
+;; shell starts with project creation and recent projects.  Persistent tools
+;; and named tabs lead to the clip sequence, native preview with a seek bar,
+;; editing forms, captions, recording, exports and tasks.  Wide, tall windows
+;; put the preview and sequence beside the editor; compact windows show one
+;; tool at a time with the same navigation.  Lists page five entries at a
+;; time; the minimum viewport is 80 by 28 cells.  Every editing
 ;; form keeps its draft locally and only sends the operation when its button
 ;; (or key) is used; a slower status poll updates the project without losing
 ;; a draft.
@@ -60,13 +61,15 @@
 ;;;###autoload (autoload 'etaf-video-studio-state "etaf-video-studio" nil t)
 ;; Return the current studio's state as a detached plist.
 ;; Keys are `:buffer', `:root', `:projects' (count), `:project' (id, title,
-;; revision, directory, undo, redo or nil), `:pane', `:clip-index',
+;; revision, directory, undo, redo or nil), `:pane', `:pages' (list-name to
+;; zero-based-page alist), `:clip-index',
 ;; `:caption-index', `:task-index', `:clips' (count), `:captions' (count),
 ;; `:tasks' (id, kind, status, revision, profile and output per task),
 ;; `:record-targets' (count), `:record-target-index', `:record' (the active
 ;; recording task or nil), `:preview' (output and revision of the completed
 ;; preview), `:publish-preview' (revision, target, chat, text and visibility
-;; of the last preview, or nil), `:stage' (file, kind and base time),
+;; of the last preview, or nil), `:stage' (file, kind, base and absolute
+;; playback position in seconds),
 ;; `:stage-playing', `:pending' (in-flight CLI queries) and `:message'.  It
 ;; signals `user-error' outside a studio buffer.
 ;;
@@ -157,6 +160,19 @@
 ;; Start a background screen-profile export (1920 pixel, CRF 18).
 ;; Publishing requires a completed screen export of the current revision.
 ;;
+;; Function: etaf-video-studio-show-export ()
+;;;###autoload (autoload 'etaf-video-studio-show-export "etaf-video-studio" nil t)
+;; Reveal the current revision's completed screen export in Finder on macOS,
+;; or Dired elsewhere, and return its path.  Missing or stale exports signal
+;; `user-error'; nothing is uploaded and the original files stay untouched.
+;;
+;; Function: etaf-video-studio-page-list (kind delta)
+;;;###autoload (autoload 'etaf-video-studio-page-list "etaf-video-studio" nil nil)
+;; Move KIND's visible list by integer DELTA pages without changing selection.
+;; KIND is projects, clips, captions, record or tasks.  Pages clamp at either
+;; end; selecting a clip reveals its page.  Invalid arguments signal
+;; `user-error'.  Page state is per buffer and resets when a project opens.
+;;
 ;; Function: etaf-video-studio-task-retry ()
 ;;;###autoload (autoload 'etaf-video-studio-task-retry "etaf-video-studio" nil t)
 ;; Resume an interrupted export; validated segments are reused.
@@ -192,8 +208,8 @@
 ;; Function: etaf-video-studio-publish-confirm ()
 ;;;###autoload (autoload 'etaf-video-studio-publish-confirm "etaf-video-studio" nil t)
 ;; Send the previewed publish with its revision as confirmation.
-;; A changed revision signals `user-error' and must be previewed again; an
-;; identical artifact and text is never sent twice.
+;; A changed revision, target, text or topic signals `user-error' and must
+;; be previewed again; an identical artifact and text is never sent twice.
 ;;
 ;; Function: etaf-video-studio-publish-reset ()
 ;;;###autoload (autoload 'etaf-video-studio-publish-reset "etaf-video-studio" nil t)
@@ -228,6 +244,13 @@
 ;; Function: etaf-video-studio-toggle-stage-audio ()
 ;;;###autoload (autoload 'etaf-video-studio-toggle-stage-audio "etaf-video-studio" nil t)
 ;; Toggle the preview stage's sound (silent by default).
+;;
+;; Function: etaf-video-studio-seek-to (seconds)
+;;;###autoload (autoload 'etaf-video-studio-seek-to "etaf-video-studio" nil t)
+;; Seek the displayed source to nonnegative absolute SECONDS, clamped to its
+;; duration, and return the requested position.  A paused video stays paused;
+;; playback and editing positions use the same source clock.  With no mounted
+;; video or invalid seconds, signal `user-error'.
 ;;
 ;; Function: etaf-video-studio-seek-forward ()
 ;;;###autoload (autoload 'etaf-video-studio-seek-forward "etaf-video-studio" nil t)

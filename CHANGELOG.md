@@ -6,6 +6,24 @@ All notable changes to this project are documented here, following
 
 ## [Unreleased]
 
+### Changed
+
+- Start with a guided project card and persistent workflow actions. The same
+  tool tabs remain visible in wide, compact and short windows; the usable
+  minimum is now 80×28 cells. Project, clip, caption, target and task lists
+  have page controls instead of silently clipping later entries.
+- Video previews start paused and offer a seek bar. Finished exports can be
+  revealed directly in the file manager from the export or task view.
+
+### Fixed
+
+- Source playback now seeks to the actual clip in point, and marks use the
+  source clock without adding the in point a second time.
+- Opening a project refreshes the library and selection; accepted edits and
+  undo/redo refill the clip form instead of leaving stale trim values.
+- Changing publication recipients, text or topic after reviewing a preview
+  requires a new preview before sending.
+
 ### Added
 
 - The video studio application: a project/library sidebar, a native

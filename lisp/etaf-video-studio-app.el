@@ -51,6 +51,7 @@ displayed project with no running task about every twelve seconds."
 (defvar etaf-video-studio-mode-map
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "a") #'etaf-video-studio-import-files)
+    (define-key map (kbd "N") #'etaf-video-studio-create-project)
     (define-key map (kbd "g") #'etaf-video-studio-refresh)
     (define-key map (kbd "u") #'etaf-video-studio-undo)
     (define-key map (kbd "U") #'etaf-video-studio-redo)
@@ -276,11 +277,17 @@ MESSAGE is a string or a function of the adopted project returning one."
        (lambda (result)
          (if (plist-get result :ok)
              (let ((data (plist-get result :data)))
-               (setf (etaf-video-studio--app-clip-index app) nil
+               (etaf-video-studio--app-clear-stage app)
+               (setf (etaf-video-studio--app-pane app) 'preview
+                     (etaf-video-studio--app-pages app) nil
+                     (etaf-video-studio--app-clip-index app) nil
                      (etaf-video-studio--app-caption-index app) nil
                      (etaf-video-studio--app-caption-edit-id app) nil
                      (etaf-video-studio--app-publish-preview app) nil)
                (etaf-video-studio--app-adopt-project app data)
+               (when (etaf-video-studio--app-selected-clip app)
+                 (etaf-video-studio-select-clip 0))
+               (etaf-video-studio-refresh)
                (etaf-video-studio--app-set-message
                 app "已打开 %s · r%s" (plist-get data :title) (plist-get data :revision)))
            (etaf-video-studio--app-report-error app result)))))))
@@ -310,6 +317,7 @@ FILES is a list of local media file names; each is probed by the CLI."
   (interactive
    (list (list (read-file-name "导入视频文件: " nil nil t))))
   (let ((app (etaf-video-studio--current)))
+    (etaf-video-studio--app-project-args app)
     (unless files
       (user-error "至少需要一个视频文件"))
     (etaf-video-studio--app-request
@@ -320,7 +328,23 @@ FILES is a list of local media file names; each is probed by the CLI."
                  (list "--yes"))
      (lambda (result)
        (etaf-video-studio--after-project
-        app result (format "已导入 %d 个素材。" (length files)))))))
+        app result (format "已导入 %d 个素材。" (length files)))
+       (when (and (plist-get result :ok) (etaf-video-studio--app-clips app))
+         (etaf-video-studio-select-clip
+          (max 0 (- (length (etaf-video-studio--app-clips app)) (length files)))))))))
+
+(defun etaf-video-studio--sync-clip (app &optional id)
+  "Refresh the selected clip's form after an accepted edit, retaining pane.
+ID preserves selection through reordering; a removed clip selects its successor."
+  (let* ((clips (etaf-video-studio--app-clips app))
+         (pane (etaf-video-studio--app-pane app))
+         (index (or (and id (cl-position id clips :key (lambda (clip) (plist-get clip :id))
+                                         :test #'equal))
+                    (etaf-video-studio--app-clip-index app))))
+    (if (and clips index)
+        (etaf-video-studio-select-clip (min index (1- (length clips))))
+      (etaf-video-studio--app-clear-stage app))
+    (setf (etaf-video-studio--app-pane app) pane)))
 
 (defun etaf-video-studio--send-edit (app operation description)
   "Apply OPERATION to APP's project and describe it with DESCRIPTION."
@@ -332,7 +356,9 @@ FILES is a list of local media file names; each is probed by the CLI."
                            (or (plist-get (etaf-video-studio--app-project app) :revision) 0))
              "--yes")
    (lambda (result)
-     (etaf-video-studio--after-project app result description))))
+     (etaf-video-studio--after-project app result description)
+     (when (and (plist-get result :ok) (plist-get operation :clip))
+       (etaf-video-studio--sync-clip app (plist-get operation :clip))))))
 
 (defun etaf-video-studio--number-from (ref label)
   "Return REF's value parsed as a number; signal `user-error' naming LABEL."
@@ -375,7 +401,7 @@ FILES is a list of local media file names; each is probed by the CLI."
          (state (and stage (ignore-errors
                              (etaf-video-state (etaf-video-studio--app-stage-handle app))))))
     (when (and stage state (eq (plist-get stage :kind) 'clip))
-      (+ (or (plist-get stage :base) 0) (or (plist-get state :position) 0)))))
+      (or (plist-get state :position) 0))))
 
 (defun etaf-video-studio-mark-in ()
   "Set the selected clip's source in point to the stage position."
@@ -506,7 +532,9 @@ FILES is a list of local media file names; each is probed by the CLI."
      app args
      (lambda (result)
        (etaf-video-studio--after-project
-        app result (if (eq direction 'undo) "已撤销一步。" "已重做一步。"))))))
+        app result (if (eq direction 'undo) "已撤销一步。" "已重做一步。"))
+       (when (plist-get result :ok)
+         (etaf-video-studio--sync-clip app))))))
 
 (defun etaf-video-studio-undo ()
   "Undo the last project edit."
@@ -522,9 +550,14 @@ FILES is a list of local media file names; each is probed by the CLI."
   "Start a background render of PROFILE; RESUME reuses validated segments."
   (let* ((app (etaf-video-studio--current))
          (project (etaf-video-studio--app-project app))
+         (_ (etaf-video-studio--app-project-args app))
          (args (append (list "video-project" "render" (plist-get project :directory)
                              "--profile" profile "--yes")
                        (when resume (list "--resume")))))
+    (unless (etaf-video-studio--app-clips app)
+      (user-error "先导入或录制一段素材"))
+    (setf (etaf-video-studio--app-pane app)
+          (if (equal profile "screen") 'tasks 'preview))
     (etaf-video-studio--app-request
      app args
      (lambda (result)
@@ -660,17 +693,19 @@ With CONFIRM, include the preview revision and `--yes'."
   (interactive)
   (let* ((app (etaf-video-studio--current))
          (target (format "%s" (etaf-value (etaf-video-studio--app-publish-target-ref app))))
-         (chat (string-trim (format "%s" (etaf-value (etaf-video-studio--app-publish-chat-ref app))))))
+         (chat (string-trim (format "%s" (etaf-value (etaf-video-studio--app-publish-chat-ref app)))))
+         (args (etaf-video-studio--publish-args app)))
     (when (and (equal target "telegram") (string-empty-p chat))
       (user-error "发布到 Telegram 需要填写 chat"))
     (etaf-video-studio--app-request
-     app (etaf-video-studio--publish-args app)
+     app args
      (lambda (result)
        (if (plist-get result :ok)
            (let ((data (plist-get result :data)))
              (if (equal (plist-get data :status) "preview")
                  (progn
-                   (setf (etaf-video-studio--app-publish-preview app) data)
+                   (setf (etaf-video-studio--app-publish-preview app)
+                         (plist-put data :request args))
                    (etaf-video-studio--app-set-message
                     app "发布预览：r%s → %s（%s）"
                     (plist-get data :revision) (plist-get data :target)
@@ -689,6 +724,9 @@ With CONFIRM, include the preview revision and `--yes'."
     (unless preview (user-error "先预览一次发布"))
     (unless (equal (plist-get preview :revision) revision)
       (user-error "项目已更新，请重新预览发布"))
+    (unless (equal (plist-get preview :request)
+                   (etaf-video-studio--publish-args app))
+      (user-error "发布目标或文案已修改，请重新预览发布"))
     (etaf-video-studio--app-request
      app (etaf-video-studio--publish-args app t)
      (lambda (result)
@@ -757,8 +795,19 @@ With CONFIRM, include the preview revision and `--yes'."
    (list (intern (completing-read "面板: "
                                   (mapcar #'symbol-name etaf-video-studio--panes) nil t))))
   (let ((app (etaf-video-studio--current)))
+    (unless (memq pane etaf-video-studio--panes)
+      (user-error "未知面板：%s" pane))
+    (when-let* ((stage (etaf-video-studio--app-stage app))
+                (runtime (etaf-runtime-for-buffer (current-buffer)))
+                (viewport (etaf-runtime-viewport runtime)))
+      (when (or (< (car viewport) etaf-video-studio--aside-min-pixels)
+                (< (cdr viewport) 33))
+        ;; A single-pane layout unmounts its video while another tool is open.
+        (setf (plist-get stage :positioned) nil)))
     (setf (etaf-video-studio--app-pane app) pane)
-    (etaf-video-studio--app-publish app)))
+    (etaf-video-studio--app-publish app)
+    (when (and (eq pane 'record) (null (etaf-video-studio--app-record-targets app)))
+      (etaf-video-studio-refresh-targets))))
 
 (defun etaf-video-studio--show-pane (pane)
   "Switch to PANE and report it."
@@ -776,11 +825,15 @@ With CONFIRM, include the preview revision and `--yes'."
 (defun etaf-video-studio-select-clip (index)
   "Select clip INDEX and prefill the trimming form."
   (interactive "n片段序号: ")
-  (let* ((app (etaf-video-studio--current))
+  (etaf-batch
+   (let* ((app (etaf-video-studio--current))
          (clips (etaf-video-studio--app-clips app)))
     (when (and (integerp index) (<= 0 index) (< index (length clips)))
       (let ((clip (nth index clips)))
-        (setf (etaf-video-studio--app-clip-index app) index)
+        (setf (etaf-video-studio--app-clip-index app) index
+              (etaf-video-studio--app-pane app) 'properties
+              (alist-get 'clips (etaf-video-studio--app-pages app))
+              (/ index etaf-video-studio--page-size))
         (etaf-set-value (etaf-video-studio--app-trim-in-ref app)
                         (etaf-video-studio--seconds (plist-get clip :in)))
         (etaf-set-value (etaf-video-studio--app-trim-out-ref app)
@@ -796,7 +849,7 @@ With CONFIRM, include the preview revision and `--yes'."
           (etaf-set-value (etaf-video-studio--app-gain-ref app)
                           (or (plist-get clip :gain) 1)))
         (etaf-video-studio-stage-selected-clip)
-        (etaf-video-studio--app-publish app)))))
+        (etaf-video-studio--app-publish app))))))
 
 (defun etaf-video-studio-select-caption (index)
   "Select caption INDEX and load it into the form."
@@ -805,7 +858,9 @@ With CONFIRM, include the preview revision and `--yes'."
          (captions (etaf-video-studio--app-captions app)))
     (when (and (integerp index) (<= 0 index) (< index (length captions)))
       (let ((caption (nth index captions)))
-        (setf (etaf-video-studio--app-caption-index app) index
+        (setf (alist-get 'captions (etaf-video-studio--app-pages app))
+              (/ index etaf-video-studio--page-size)
+              (etaf-video-studio--app-caption-index app) index
               (etaf-video-studio--app-caption-edit-id app) (plist-get caption :id))
         (etaf-set-value (etaf-video-studio--app-caption-start-ref app)
                         (etaf-video-studio--seconds (plist-get caption :start)))
@@ -823,7 +878,9 @@ With CONFIRM, include the preview revision and `--yes'."
   (let* ((app (etaf-video-studio--current))
          (targets (etaf-video-studio--app-record-targets app)))
     (when (and (integerp index) (<= 0 index) (< index (length targets)))
-      (setf (etaf-video-studio--app-record-target-index app) index)
+      (setf (etaf-video-studio--app-record-target-index app) index
+            (alist-get 'record (etaf-video-studio--app-pages app))
+            (/ index etaf-video-studio--page-size))
       (etaf-video-studio--app-publish app))))
 
 (defun etaf-video-studio-select-task (index)
@@ -893,6 +950,21 @@ With CONFIRM, include the preview revision and `--yes'."
     (etaf-video-studio--app-set-message
      app (if (etaf-value ref) "预览声音已打开。" "预览声音已关闭。"))))
 
+(defun etaf-video-studio-seek-to (seconds)
+  "Seek the displayed source to absolute SECONDS, clamped to its duration."
+  (interactive "n定位到秒数: ")
+  (unless (and (numberp seconds) (>= seconds 0))
+    (user-error "时间必须是非负秒数"))
+  (let* ((app (etaf-video-studio--current))
+         (handle (etaf-video-studio--app-stage-handle app)))
+    (unless (etaf-video-studio--app-stage app)
+      (user-error "先选择一个片段或生成成片预览"))
+    (let* ((state (etaf-video-state handle))
+           (target (min seconds (or (plist-get state :duration) seconds))))
+      (etaf-video-seek handle target)
+      (etaf-set-value (etaf-video-studio--app-stage-time-ref app) target)
+      target)))
+
 (defun etaf-video-studio--seek (delta)
   "Seek the stage video by DELTA seconds when it has a session."
   (let* ((app (etaf-video-studio--current))
@@ -903,8 +975,8 @@ With CONFIRM, include the preview revision and `--yes'."
            (position (or (and state (plist-get state :position)) 0))
            (duration (or (and state (plist-get state :duration)) 0))
            (target (max 0 (min duration (+ position delta)))))
-      (etaf-video-seek (etaf-video-studio--app-stage-handle app) target)
-      (etaf-video-studio--app-set-message app "定位到 %.1fs。" target))))
+      (etaf-video-studio-seek-to target)
+      (etaf-video-studio--app-set-message app "定位到 %.1f 秒。" target))))
 
 (defun etaf-video-studio-seek-forward ()
   "Seek the stage video forward five seconds."
@@ -938,13 +1010,20 @@ With CONFIRM, include the preview revision and `--yes'."
                        (ignore-errors
                          (etaf-video-state
                           (etaf-video-studio--app-stage-handle app))))))
+      (when state
+        (etaf-set-value (etaf-video-studio--app-stage-time-ref app)
+                        (or (plist-get state :position) 0)))
+      (when (and state (not (plist-get stage :positioned)))
+        (setf (plist-get stage :positioned) t)
+        (when (> (or (plist-get stage :base) 0) 0)
+          (etaf-video-seek (etaf-video-studio--app-stage-handle app)
+                           (plist-get stage :base))))
       (when (buffer-live-p (etaf-video-studio--app-buffer app))
         (let ((playing (and state (plist-get state :playing) t))
               (position (if (and state stage)
                             (format "%s / %s%s"
                                     (etaf-video-studio--clock
-                                     (+ (or (plist-get stage :base) 0)
-                                        (or (plist-get state :position) 0)))
+                                     (or (plist-get state :position) 0))
                                     (etaf-video-studio--clock (plist-get state :duration))
                                     (cond ((plist-get state :playing) " · 播放中")
                                           ((plist-get state :ended) " · 已结束")
@@ -1010,6 +1089,32 @@ With CONFIRM, include the preview revision and `--yes'."
 
 ;;; Public state
 
+(defun etaf-video-studio-page-list (kind delta)
+  "Move KIND's list by DELTA pages, keeping selection unchanged.
+KIND is projects, clips, captions, record or tasks.  DELTA is an integer."
+  (let ((app (etaf-video-studio--current)))
+    (unless (and (memq kind '(projects clips captions record tasks))
+                 (integerp delta))
+      (user-error "列表或页码无效"))
+    (setf (alist-get kind (etaf-video-studio--app-pages app))
+          (max 0 (+ (etaf-video-studio--page app kind) delta)))
+    (setf (alist-get kind (etaf-video-studio--app-pages app))
+          (etaf-video-studio--page app kind))
+    (etaf-video-studio--app-publish app)))
+
+(defun etaf-video-studio-show-export ()
+  "Reveal the current revision's completed export in the file manager."
+  (interactive)
+  (let* ((app (etaf-video-studio--current))
+         (task (etaf-video-studio--app-screen-export app))
+         (file (plist-get task :output)))
+    (unless (and file (file-exists-p file))
+      (user-error "当前版本还没有可打开的成片，请先导出"))
+    (if (eq system-type 'darwin)
+        (start-process "video-studio-reveal" nil "open" "-R" file)
+      (dired (file-name-directory file)))
+    file))
+
 (defun etaf-video-studio-state ()
   "Return the current studio's state as a detached plist.
 Keys are `:buffer', `:root', `:projects' (count), `:project' (id title
@@ -1032,6 +1137,8 @@ revision or nil), `:pane', `:clip-index', `:caption-index', `:task-index',
                            :undo (plist-get project :undo)
                            :redo (plist-get project :redo)))
           :pane (etaf-video-studio--app-pane app)
+          :pages (mapcar (lambda (kind) (cons kind (etaf-video-studio--page app kind)))
+                         '(projects clips captions record tasks))
           :clip-index (etaf-video-studio--app-clip-index app)
           :caption-index (etaf-video-studio--app-caption-index app)
           :task-index (etaf-video-studio--app-task-index app)
@@ -1062,7 +1169,8 @@ revision or nil), `:pane', `:clip-index', `:caption-index', `:task-index',
           :stage (when stage
                    (list :file (plist-get stage :file)
                          :kind (plist-get stage :kind)
-                         :base (plist-get stage :base)))
+                         :base (plist-get stage :base)
+                         :position (etaf-value (etaf-video-studio--app-stage-time-ref app))))
           :stage-playing (etaf-video-studio--app-stage-playing app)
           :pending (etaf-video-studio--app-pending app)
           :message (etaf-video-studio--app-message app))))

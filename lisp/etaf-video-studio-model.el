@@ -38,7 +38,7 @@ for the current revision, when one exists.  STAGE describes what the native
 `etaf-video' shows: `(:file :kind :base ?:aspect :key)'.  The *-REF fields
 are the reactive cells the views bind."
   buffer root
-  projects project pane
+  projects project pane pages
   clip-index caption-index task-index
   record-targets record-target-index
   publish-preview stage preview
@@ -50,7 +50,7 @@ are the reactive cells the views bind."
   new-title-ref record-duration-ref
   caption-id-ref
   record-audio-ref publish-target-ref publish-chat-ref publish-text-ref
-  publish-topic-ref speed-ref gain-ref stage-audio-ref
+  publish-topic-ref speed-ref gain-ref stage-audio-ref stage-time-ref
   poll-timer stage-timer poll-tick poll-signature
   stage-handle stage-generation stage-playing stage-position)
 
@@ -60,7 +60,8 @@ ROOT nil leaves the project root to the CLI default."
   (etaf-video-studio--app--create
    :buffer buffer
    :root root
-   :pane 'preview
+   :pane 'projects
+   :pages nil
    :pending 0
    :clip-index nil :caption-index nil :task-index nil
    :record-target-index nil
@@ -80,10 +81,36 @@ ROOT nil leaves the project root to the CLI default."
    :new-title-ref (etaf-ref "" :name 'video-studio-new-title)
    :speed-ref (etaf-ref 1 :name 'video-studio-speed)
    :gain-ref (etaf-ref 1 :name 'video-studio-gain)
+   :stage-time-ref (etaf-ref 0 :name 'video-studio-stage-time)
    :stage-audio-ref (etaf-ref nil :name 'video-studio-stage-audio)
    :theme-ref (etaf-ref (etaf-video-studio-theme-defaults)
                         :name 'video-studio-theme)
    :data-ref (etaf-ref nil :name 'video-studio-data)))
+
+(defconst etaf-video-studio--page-size 5
+  "Rows per list page, keeping forms reachable in a short window.")
+
+(defun etaf-video-studio--list-items (app kind)
+  "Return APP's public list identified by KIND."
+  (pcase kind
+    ('projects (etaf-video-studio--app-projects app))
+    ('clips (etaf-video-studio--app-clips app))
+    ('captions (etaf-video-studio--app-captions app))
+    ('record (etaf-video-studio--app-record-targets app))
+    ('tasks (reverse (etaf-video-studio--app-tasks app)))))
+
+(defun etaf-video-studio--page (app kind)
+  "Return the clamped zero-based page of APP's KIND list."
+  (min (or (alist-get kind (etaf-video-studio--app-pages app)) 0)
+       (/ (max 0 (1- (length (etaf-video-studio--list-items app kind))))
+          etaf-video-studio--page-size)))
+
+(defun etaf-video-studio--page-items (app kind)
+  "Return the visible page of APP's KIND list."
+  (seq-take (nthcdr (* (etaf-video-studio--page app kind)
+                       etaf-video-studio--page-size)
+                    (etaf-video-studio--list-items app kind))
+            etaf-video-studio--page-size))
 
 (defun etaf-video-studio--app-clips (app)
   "Return the current project's clips as a list."
@@ -239,14 +266,18 @@ collide with the session that is still being torn down."
             (intern (format "etaf-video-studio-stage-%d" generation))
             (etaf-video-studio--app-stage app)
             (list :file file :kind kind :base (or base 0) :aspect nil
-                  :revision revision :key key
+                  :revision revision :key key :positioned nil
                   :handle (etaf-video-studio--app-stage-handle app)))
+      (etaf-set-value (etaf-video-studio--app-stage-time-ref app) 0)
       (etaf-video-studio--app-probe-stage app)
       t)))
 
 (defun etaf-video-studio--app-clear-stage (app)
   "Remove the video stage of APP."
-  (setf (etaf-video-studio--app-stage app) nil))
+  (setf (etaf-video-studio--app-stage app) nil
+        (etaf-video-studio--app-stage-playing app) nil
+        (etaf-video-studio--app-stage-position app) nil)
+  (etaf-set-value (etaf-video-studio--app-stage-time-ref app) 0))
 
 (defun etaf-video-studio--app-probe-stage (app)
   "Probe the stage file of APP for duration and pixel size.
@@ -272,6 +303,7 @@ updates the aspect used to size the canvas."
   "Return a plain snapshot plist of everything the views display."
   (list :projects (etaf-video-studio--app-projects app)
         :project (etaf-video-studio--app-project app)
+        :pages (copy-tree (etaf-video-studio--app-pages app))
         :pane (etaf-video-studio--app-pane app)
         :clip-index (etaf-video-studio--app-clip-index app)
         :caption-index (etaf-video-studio--app-caption-index app)

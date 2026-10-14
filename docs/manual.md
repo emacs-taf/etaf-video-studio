@@ -15,10 +15,12 @@ confirmation before anything leaves the machine.
 
 ## Projects
 
-The sidebar lists the projects of the session's library (default
+The welcome card and 项目 tab list the session's library (default
 `~/Movies/Video Projects`, or `PI_SKILL_VIDEO_PROJECT_DIRECTORY`). Click a
-row to open it. Type a title into the field under the list and press the
-新建 button (or RET) to create and open a new project. 刷新 ( `g` )
+row to open it. Enter a title and press 新建 (or RET) to create and open a
+project; `N` offers the same command through the minibuffer. Lists show five
+entries per page with 上一页 / 下一页 controls. Paging does not change selection.
+Opening a project resets its pages and loads its first clip when available. 刷新 ( `g` )
 reloads both the list and the open project. A project shows its revision
 and total duration in the header, and the status menu reports the
 revision through the CLI parser, so the window and the skill always agree.
@@ -29,8 +31,8 @@ Reopening re-reads the library.
 
 ## Recording
 
-Open the recording pane (`r`) and press 刷新目标 to list the current macOS
-windows and displays. Targets come from the CLI's inventory at that
+Open 录屏 (`r`); the first visit automatically lists current macOS windows
+and displays. 刷新 reloads that inventory. Targets come from the CLI's inventory at that
 moment; a stale ID is rejected by the skill. Select a row, choose the audio
 mode (`none` by default; `system`, `microphone` or both) and the maximum
 duration (1–7200 seconds), then 开始录制 (`R`). 停止录制 sends the stop
@@ -45,10 +47,14 @@ an unreadable file is rejected before the project changes.
 
 ## Editing
 
-The clip list is the timeline. Selecting a row (click, RET, or
-`etaf-video-studio-select-clip`) shows its facts and the edit form in the
-details column, and loads the source into the preview stage so `i`, `o` and
-`s` can mark positions while watching.
+The ordered clip list is the timeline; this editor does not offer overlapping
+tracks, transitions, automatic transcription or automatic silence removal.
+Selecting a row opens 剪辑, fills its form and loads a paused source preview
+at the clip's actual in point. The seek bar supports pointer positioning and
+one-second Left/Right steps; `SPC` plays or pauses, and `i`, `o` and `s` edit
+at the absolute source position. Selecting a clip also reveals its list page.
+Accepted clip edits and undo/redo refresh the form from the saved result;
+background polls leave unfinished drafts alone.
 
 | Action | Form | Key |
 | --- | --- | --- |
@@ -81,7 +87,10 @@ when it completes, the stage switches to the rendered cut and 成片预览 /
 preview is always the same edit decision list as the export, so a cut that
 plays here is the cut that renders.
 
-The stage plays silently by default; `m` toggles sound. `SPC` play/pause,
+The stage starts paused and silent; `m` toggles sound. Loading a source never
+starts unexpected playback. The bar seeks within the displayed source; the
+source preview is the original recording, whereas the rendered preview
+includes cuts, speed, gain and captions. `SPC` play/pause,
 `f`/`b` seek five seconds, and the footer clock follows the native video
 session. Editing the project makes the rendered preview stale: it is
 replaced by the next completed preview of the new revision instead of
@@ -95,7 +104,11 @@ current revision. The task pane (`t`) lists tasks with status and output;
 续跑导出 resumes an interrupted export and reuses validated segments, and
 取消导出 stops only this project's export. Closing the studio does not
 stop these jobs — they belong to `job-run`. A failed export keeps its task
-and message, and 续跑导出 retries from the finished segments.
+and message, and 续跑导出 retries from the finished segments. Newest tasks
+appear first. A completed export of the current revision exposes
+在文件夹中显示成片 in both 任务 and 导出: it reveals the file in Finder on
+macOS, or opens its containing directory in Dired elsewhere. This never uploads
+anything. Editing makes the previous export ineligible for current publication.
 
 ## Publishing
 
@@ -104,17 +117,21 @@ The 发布 pane previews before it sends. Choose the target (`Telegram` or
 topic; 预览发布 asks the CLI for a preview object naming the revision,
 target, visibility and text. Nothing is sent. Review it, then 确认发布
 sends the same request with the previewed revision and `--yes`; a project
-that changed in between requires a new preview, and an identical artifact
-and text is never sent again. A publish whose result is unknown is reported
+that changed in between requires a new preview. Changing the recipient,
+text, target or topic also requires a new preview; confirmation cannot silently
+send different content. An identical artifact and text is never sent again. A publish whose result is unknown is reported
 as such and must be checked against the target — the application never
 retries it automatically.
 
 ## Layout and keys
 
-Wide windows show the project/clip sidebar, the preview stage and the
-details column; ordinary windows show the sidebar and tabbed panes; narrow
-windows show only the panes, with 项目 as a tab, so no feature disappears.
-The minimum usable viewport is 80 columns by 24 rows; below that the layout
+The action bar always exposes import, recording, undo/redo, preview and export.
+The same eight tabs remain visible at every supported size. With at least
+1100 logical pixels and 33 viewport rows, the preview sits beside the editor;
+from 39 rows the ordered clip list also appears below it. Smaller or shorter
+windows show one tool at a time. 项目 always opens the project card instead
+of reserving an empty sidebar, and 任务 occupies space only when selected.
+The minimum usable viewport is 80 columns by 28 rows; below that the layout
 keeps its structure and the window clips deliberately. The footer always
 carries the key hints; `?` opens ETAF's full help, `M-g` jumps between
 regions and TAB moves focus.

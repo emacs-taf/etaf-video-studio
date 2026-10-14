@@ -303,7 +303,7 @@ The field's value must be empty or already the desired prefix."
     (etaf-video-studio-open-project "video-1")
     (etaf-video-studio-tests--settle (current-buffer))
     (etaf-video-studio-select-pane 'properties)
-    (let ((buffer (current-buffer)))
+    (progn
       (etaf-video-studio-select-clip 0)
       (etaf-video-studio-tests--replace-input 'video-studio-trim-in "2.25")
       (let ((operation (etaf-video-studio-tests--edit-operation
@@ -323,7 +323,7 @@ The field's value must be empty or already the desired prefix."
                   :captions nil)))
     (etaf-video-studio-open-project "video-1")
     (etaf-video-studio-tests--settle (current-buffer))
-    (let ((buffer (current-buffer)))
+    (progn
       (etaf-video-studio-select-clip 0)
       (let ((speed (etaf-video-studio-tests--edit-operation
                     #'etaf-video-studio-apply-speed)))
@@ -431,8 +431,10 @@ The field's value must be empty or already the desired prefix."
     (etaf-video-studio-tests--settle (current-buffer))
     (etaf-video-studio-select-pane 'tasks)
     (etaf-video-studio-tests--settle (current-buffer))
-    (should (string-match-p "exports/r2-screen.mp4"
-                            (etaf-video-studio-tests--body (current-buffer))))
+    (let ((body (etaf-video-studio-tests--body (current-buffer)))
+          (output (plist-get (car (plist-get (etaf-video-studio-state) :tasks)) :output)))
+      (should (string-match-p "r2-screen.mp4" body))
+      (should (equal "exports/r2-screen.mp4" output)))
     (etaf-video-studio-cancel-render)
     (etaf-video-studio-tests--settle (current-buffer))
     (let ((cancel (car (last (etaf-video-studio-tests--calls-for "render")))))
@@ -622,7 +624,7 @@ The field's value must be empty or already the desired prefix."
     (etaf-runtime-refit (etaf-runtime-for-buffer (current-buffer)) 1600 40)
     (etaf-video-studio-tests--settle (current-buffer))
     (let ((body (etaf-video-studio-tests--body (current-buffer))))
-      (should (string-match-p "片段属性" body))
+      (should (string-match-p "片段剪辑" body))
       (should (string-match-p "项目" body)))
     ;; The draft typed before the resize is still applied by the next edit.
     (let ((operation (etaf-video-studio-tests--edit-operation
@@ -709,6 +711,88 @@ The field's value must be empty or already the desired prefix."
     (should-not (plist-get (etaf-video-studio-state) :stage))
     (should (string-match-p "素材文件不存在"
                             (or (plist-get (etaf-video-studio-state) :message) "")))))
+
+(ert-deftest etaf-video-studio-tests-paged-clips-remain-reachable ()
+  "Every clip remains reachable and selection reveals its stable page."
+  (etaf-video-studio-tests--with-app ()
+    (etaf-video-studio-tests--write
+     "status.json"
+     (etaf-video-studio-tests--project
+      :plan (list :version 1 :clips
+                  (cl-loop for n from 0 below 13
+                           collect (etaf-video-studio-tests--clip
+                                    :id (format "clip-%d" n)
+                                    :file (format "/missing/part-%02d.mp4" n))))))
+    (etaf-video-studio-open-project "video-1")
+    (etaf-video-studio-tests--settle (current-buffer))
+    (etaf-video-studio-select-pane 'clips)
+    (etaf-video-studio-page-list 'clips 1)
+    (let ((body (etaf-video-studio-tests--body (current-buffer))))
+      (should (string-match-p "part-05.mp4" body))
+      (should-not (string-match-p "part-00.mp4" body)))
+    (let ((focused (etaf-focus (etaf-runtime-for-buffer (current-buffer)) 'video-studio-clip-5)))
+      (should focused))
+    (execute-kbd-macro (kbd "RET"))
+    (should (= 5 (plist-get (etaf-video-studio-state) :clip-index)))
+    (etaf-video-studio-select-clip 12)
+    (let ((pages (plist-get (etaf-video-studio-state) :pages)))
+      (should (= 2 (alist-get 'clips pages))))
+    (etaf-video-studio-page-list 'clips -100)
+    (let ((state (etaf-video-studio-state)))
+      (should (= 0 (alist-get 'clips (plist-get state :pages))))
+      (should (= 12 (plist-get state :clip-index))))))
+
+(ert-deftest etaf-video-studio-tests-empty-project-actions-are-safe ()
+  "Missing projects and empty exports report recovery instead of bad CLI args."
+  (etaf-video-studio-tests--with-app ()
+    (should-error (etaf-video-studio-import-files '("/missing.mp4")) :type 'user-error)
+    (should-error (etaf-video-studio-render-screen) :type 'user-error)
+    (should-error (etaf-video-studio-show-export) :type 'user-error)
+    (should-error (etaf-video-studio-seek-to 1) :type 'user-error)
+    (should-error (etaf-video-studio-page-list 'unknown 1) :type 'user-error)
+    (should-error (etaf-video-studio-select-pane 'unknown) :type 'user-error)
+    (etaf-video-studio-tests--write "status.json" (etaf-video-studio-tests--project))
+    (etaf-video-studio-open-project "video-1")
+    (etaf-video-studio-tests--settle (current-buffer))
+    (should-error (etaf-video-studio-render-preview) :type 'user-error)))
+
+(ert-deftest etaf-video-studio-tests-publish-changes-require-another-preview ()
+  "Changing a recipient, caption or topic never sends an unreviewed request."
+  (etaf-video-studio-tests--with-app ()
+    (etaf-video-studio-tests--write "status.json" (etaf-video-studio-tests--project))
+    (etaf-video-studio-open-project "video-1")
+    (etaf-video-studio-tests--settle (current-buffer))
+    (etaf-video-studio-select-pane 'publish)
+    (etaf-video-studio-tests--type-input 'video-studio-publish-chat "12345")
+    (etaf-video-studio-tests--type-input 'video-studio-publish-text "原文案")
+    (etaf-video-studio-tests--type-input 'video-studio-publish-topic "1")
+    (dolist (field '((video-studio-publish-chat . "67890")
+                     (video-studio-publish-text . "新的文案")
+                     (video-studio-publish-topic . "42")))
+      (etaf-video-studio-publish-preview)
+      (etaf-video-studio-tests--settle (current-buffer))
+      (etaf-video-studio-tests--replace-input (car field) (cdr field))
+      (should-error (etaf-video-studio-publish-confirm) :type 'user-error))
+    (let ((confirmed (cl-remove-if-not
+                      (lambda (call) (member "--yes" call))
+                      (etaf-video-studio-tests--calls-for "publish"))))
+      (should-not confirmed))))
+
+(ert-deftest etaf-video-studio-tests-edit-refreshes-form-from-result ()
+  "After a trim the form reflects the accepted clip rather than stale drafts."
+  (etaf-video-studio-tests--with-app ()
+    (etaf-video-studio-tests--write
+     "status.json" (etaf-video-studio-tests--project
+                    :plan (list :clips (list (etaf-video-studio-tests--clip)))))
+    (etaf-video-studio-open-project "video-1")
+    (etaf-video-studio-tests--settle (current-buffer))
+    (etaf-video-studio-tests--write
+     "edit.json" (etaf-video-studio-tests--project
+                  :revision 1 :plan (list :clips (list (etaf-video-studio-tests--clip :in 2)))))
+    (etaf-video-studio-apply-trim)
+    (etaf-video-studio-tests--settle (current-buffer))
+    (let ((operation (etaf-video-studio-tests--edit-operation #'etaf-video-studio-apply-trim)))
+      (should (= 2 (plist-get operation :in))))))
 
 (provide 'etaf-video-studio-tests)
 ;;; etaf-video-studio-tests.el ends here

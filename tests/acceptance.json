@@ -11,6 +11,26 @@
   "support": [],
   "cases": [
     {
+      "name": "etaf-video-studio-tests-paged-clips-remain-reachable",
+      "file": "tests/etaf-video-studio-tests.el",
+      "purpose": "Clip pages expose every entry; native activation selects it and selection reveals its page without losing the selected clip on paging."
+    },
+    {
+      "name": "etaf-video-studio-tests-empty-project-actions-are-safe",
+      "file": "tests/etaf-video-studio-tests.el",
+      "purpose": "Missing projects, empty exports, invalid navigation and unavailable playback fail with actionable user errors."
+    },
+    {
+      "name": "etaf-video-studio-tests-publish-changes-require-another-preview",
+      "file": "tests/etaf-video-studio-tests.el",
+      "purpose": "Changing a recipient, text or topic after preview cannot send an unreviewed publication."
+    },
+    {
+      "name": "etaf-video-studio-tests-edit-refreshes-form-from-result",
+      "file": "tests/etaf-video-studio-tests.el",
+      "purpose": "The next trim uses the accepted clip interval rather than stale form fields."
+    },
+    {
       "name": "etaf-video-studio-tests-open-mounts-and-close-releases",
       "file": "tests/etaf-video-studio-tests.el",
       "purpose": "Opening mounts a live runtime with the workbench shell and closing unmounts and kills the buffer."

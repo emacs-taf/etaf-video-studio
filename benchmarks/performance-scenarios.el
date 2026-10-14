@@ -15,6 +15,11 @@
 (require 'etaf-video-studio)
 (declare-function taf-benchmark-register "performance-driver" (id &rest properties))
 
+(defconst etaf-video-studio-benchmark--cli
+  (expand-file-name "../tests/fixtures/fake-pi-skill"
+                    (file-name-directory (or load-file-name buffer-file-name)))
+  "Fixture executable resolved while this adapter is loaded.")
+
 (defconst etaf-video-studio-benchmark--status
   "{\"ok\":true,\"id\":\"video-1\",\"title\":\"基准项目\",\"revision\":0,
     \"updated\":\"2026-10-13T00:00:00Z\",
@@ -56,15 +61,15 @@ stay inside the temporary library.")
 KIND is `clip' to select clips or `pane' to switch details panes."
   (let* ((root (etaf-video-studio-benchmark--write
                 (make-temp-file "video-studio-benchmark-" t)))
-         (etaf-video-studio-executable
-          (expand-file-name "../tests/fixtures/fake-pi-skill"
-                            (file-name-directory (or load-file-name buffer-file-name))))
+         (etaf-video-studio-executable etaf-video-studio-benchmark--cli)
          (etaf-video-studio-root root)
          (_ (setenv "FAKE_PI_SKILL_ROOT" root))
          (_ (setenv "FAKE_PI_SKILL_LOG" (expand-file-name "calls.jsonl" root)))
          (buffer (etaf-video-studio-open "video-1"))
          (expected 'preview)
          (sample 0))
+    (with-current-buffer buffer
+      (setq-local etaf-video-studio-executable etaf-video-studio-benchmark--cli))
     (etaf-video-studio-benchmark--wait buffer)
     (setq sample 0)
     (list

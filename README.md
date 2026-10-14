@@ -1,9 +1,9 @@
 # etaf-video-studio
 
 Record, edit and publish software tutorials from one ETAF workbench: a
-project and clip sidebar, a native video preview, explicit edit forms for
-clips and captions, background preview/export tasks, macOS screen recording
-and a two-step publish flow. It is the text-application face of the
+guided project start, a persistent action bar, a seekable native video preview,
+ordered clip pages, explicit edit forms, background previews/exports, macOS
+screen recording and a two-step publish flow. It is the text-application face of the
 `video-project` skill and shares its projects with the CLI — no second
 source of truth.
 
@@ -33,7 +33,25 @@ The studio opens `~/Movies/Video Projects` (or
 different library, or call
 `(etaf-video-studio-open "project-id" "/path/to/library")`.
 
-Keys: `SPC` play/pause, `v` preview, `e` export, `r` record pane, `R` start
+## Make your first video
+
+1. Enter a project title on the welcome card and choose **新建**.
+2. Choose **导入素材**, or **录屏** and a window. Recording is silent unless
+   you explicitly select audio; stopping imports the saved video.
+3. Select a clip. Use the seek bar and play/pause, then edit its in/out
+   seconds or split it. The **字幕** tab adds timed text. Changes save
+   automatically; **撤销** restores the previous edit without touching sources.
+4. Choose **预览成片** to render the edited cut, then **导出视频**. The
+   **任务** and **导出** tabs show completion and **在文件夹中显示成片**.
+5. Publishing is optional: preview the destination and text, then explicitly
+   confirm. A public link is accessible to anyone who has it.
+
+All tools remain in the same tabs on small windows. The minimum usable
+viewport is 80 columns by 28 rows; lists have previous/next page controls.
+This is a single-sequence tutorial editor, not a multi-track compositor;
+captions are entered manually, not transcribed automatically.
+
+Keys: `N` new project, `a` import, `SPC` play/pause, `v` preview, `e` export, `r` record pane, `R` start
 or stop recording, `p` publish, `c` captions, `t` tasks, `i`/`o` mark in/out,
 `s` split, `x` remove, `u`/`U` undo/redo, `T` theme, `g` refresh, `?` help,
 `q` close. Closing the studio never stops a background task.

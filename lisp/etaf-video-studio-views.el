@@ -7,8 +7,8 @@
 ;; Views are pure projections of the model snapshot and the draft refs; no
 ;; storage, network, process or controller call belongs here, because ETAF
 ;; rejects a render with side effects.  The shell is a flow layout: a fixed
-;; header, a resizable body (project/clip sidebar, centred preview, details
-;; column on wide viewports, or tabbed panes on narrow ones) and a fixed
+;; header, persistent tools/tabs, an aspect-preserving preview and ordered
+;; clip sequence beside the editor (one pane in short/compact windows), and a fixed
 ;; footer.  Every control a person can press carries a stable `:ref', so a
 ;; GUI pass can focus and activate it without synthesising clicks.
 
@@ -65,15 +65,9 @@
 (declare-function etaf-video-studio-toggle-theme "etaf-video-studio-app" ())
 (declare-function etaf-video-studio-close "etaf-video-studio-app" ())
 (declare-function etaf-video-studio-task-retry "etaf-video-studio-app" ())
-
-(defconst etaf-video-studio--sidebar-width '(ch 32)
-  "Width of the project and clip sidebar.")
-
-(defconst etaf-video-studio--aside-width '(ch 34)
-  "Width of the wide-layout details column.")
-
-(defconst etaf-video-studio--sidebar-min-pixels 700
-  "Published viewport width from which the sidebar column is shown.")
+(declare-function etaf-video-studio-page-list "etaf-video-studio-app" (kind delta))
+(declare-function etaf-video-studio-show-export "etaf-video-studio-app" ())
+(declare-function etaf-video-studio-seek-to "etaf-video-studio-app" (seconds))
 
 (defconst etaf-video-studio--aside-min-pixels 1100
   "Published viewport width from which the details column is shown.")
@@ -82,10 +76,10 @@
   '((projects . "项目")
     (clips . "片段")
     (preview . "预览")
-    (properties . "属性")
+    (properties . "剪辑")
     (captions . "字幕")
-    (record . "录制")
-    (publish . "发布")
+    (record . "录屏")
+    (publish . "导出")
     (tasks . "任务"))
   "Tab labels by pane key.")
 
@@ -129,6 +123,16 @@
     ((or "interrupted" "lost") 'warning)
     (_ 'neutral)))
 
+(defun etaf-video-studio--task-status-label (status)
+  "Return a readable status, preserving an unknown backend value."
+  (or (cdr (assoc status '(("queued" . "排队中") ("running" . "处理中")
+                           ("recording" . "录制中") ("stopping" . "正在保存")
+                           ("sending" . "发送中") ("completed" . "已完成")
+                           ("failed" . "失败") ("unknown" . "待核对")
+                           ("interrupted" . "已中断") ("cancelled" . "已取消")
+                           ("lost" . "已中断"))))
+      status "未知"))
+
 (defun etaf-video-studio--clip-duration (clip)
   "Return CLIP's contribution to the timeline, or nil when unknown."
   (let ((in (plist-get clip :in))
@@ -137,14 +141,14 @@
     (when (and (numberp in) (numberp out) (numberp speed) (> speed 0))
       (/ (- out in) (float speed)))))
 
-(defun etaf-video-studio--stage-grid (aspect viewport-width viewport-rows sidebar aside)
-  "Return the canvas (COLUMNS . ROWS) fitting the available centre space.
-ASPECT is `(WIDTH . HEIGHT)' of the source; VIEWPORT-WIDTH and VIEWPORT-ROWS
-are the published viewport; SIDEBAR and ASIDE say which columns exist."
+(defun etaf-video-studio--stage-grid (aspect viewport-width viewport-rows)
+  "Return the aspect-preserving canvas fitting WIDTH pixels and ROWS lines.
+ASPECT is the source's (WIDTH . HEIGHT); VIEWPORT-WIDTH and VIEWPORT-ROWS
+are the preview region's budget after allocating the editor and clip list."
   (let* ((cell-width (max 1 (frame-char-width)))
          (cell-height (max 1 (frame-char-height)))
-         (reserved-ch (+ (if sidebar 32 0) (if aside 34 0) 6))
-         (reserved-rows 8)
+         (reserved-ch 6)
+         (reserved-rows 10)
          (center-ch (max 16 (- (floor viewport-width cell-width) reserved-ch)))
          (available-rows (max 5 (- viewport-rows reserved-rows)))
          (aspect (if (and (consp aspect) (numberp (car aspect)) (numberp (cdr aspect))
@@ -162,26 +166,11 @@ are the published viewport; SIDEBAR and ASIDE say which columns exist."
                                      (* cell-height (car aspect))))))))
     (cons columns rows)))
 
-(defun etaf-video-studio--pane-tabs (_state layout)
-  "Return the tab items for STATE in LAYOUT.
-The sidebar and the details column already show some panes, so the tab set
-follows what the layout hides instead of repeating visible content."
-  (let ((keys (cond
-               ((eq layout 'wide) '(properties captions record publish tasks))
-               ((eq layout 'narrow) '(projects clips preview properties captions record publish tasks))
-               (t '(preview properties captions record publish tasks)))))
-    (cl-loop for key in keys
-             collect (list :key key
-                           :label (alist-get key etaf-video-studio--tab-keys)))))
-
-(defun etaf-video-studio--effective-pane (state layout)
-  "Return the pane actually shown for STATE's selected pane in LAYOUT.
-A pane that is visible in a column has no tab, so selecting it falls back to
-the first tab of the layout instead of hiding every pane."
-  (let* ((keys (mapcar (lambda (item) (plist-get item :key))
-                       (etaf-video-studio--pane-tabs state layout)))
-         (pane (plist-get state :pane)))
-    (if (memq pane keys) pane (car keys))))
+(defun etaf-video-studio--pane-tabs (_state _layout)
+  "Return the same named navigation controls at every viewport size."
+  (cl-loop for key in '(projects clips preview properties captions record publish tasks)
+           collect (list :key key :ref (intern (format "video-studio-tab-%s" key))
+                         :label (alist-get key etaf-video-studio--tab-keys))))
 
 ;;; Small shared components
 
@@ -205,7 +194,7 @@ the first tab of the layout instead of hiding every pane."
   :view
   (flex :flex-direction 'row :height '(lh 1) :width 'stretch :align-items 'center
         :gap '((lh 0) (ch 1))
-    (box :width '(ch 7) :height '(lh 1) :overflow 'hidden
+    (box :width '(ch 8) :height '(lh 1) :overflow 'hidden
          :color (etaf-video-studio-color :muted)
       (text (expr label)))
     (box :flex-grow 1 :flex-basis '(ch 0) :min-width '(ch 0) :height '(lh 1)
@@ -220,7 +209,23 @@ the first tab of the layout instead of hiding every pane."
   (etaf-empty :title title :description description
               :action-label action-label :on-action on-action))
 
-;;; Sidebar: projects and clips
+(etaf-define-component etaf-video-studio--pager (&key kind count page)
+  "Keep every entry reachable without displacing the editor below its list."
+  :render
+  (let ((pages (max 1 (ceiling count etaf-video-studio--page-size))))
+    (etaf-view
+     (flex :flex-direction 'row :width 'stretch :height '(lh 1)
+           :align-items 'center :gap '((lh 0) (ch 1))
+       (box :flex-grow 1 :flex-basis '(ch 0) :color (etaf-video-studio-color :muted)
+         (text (expr (format "%d 项 · %d / %d 页" count (1+ page) pages))))
+       (etaf-button :label "上一页" :variant 'ghost :disabled (= page 0)
+                    :ref (intern (format "video-studio-%s-prev" kind))
+                    :on-press (lambda () (etaf-video-studio-page-list kind -1)))
+       (etaf-button :label "下一页" :variant 'ghost :disabled (>= (1+ page) pages)
+                    :ref (intern (format "video-studio-%s-next" kind))
+                    :on-press (lambda () (etaf-video-studio-page-list kind 1)))))))
+
+;;; Projects and the ordered clip sequence
 
 (etaf-define-component etaf-video-studio--project-row
     (&key project selected on-press)
@@ -286,19 +291,21 @@ the first tab of the layout instead of hiding every pane."
         :icon 'list :title (format "项目 (%d)" (length projects))
         :action-label "刷新" :action-ref 'video-studio-refresh
         :on-action (lambda () (etaf-video-studio-refresh)))
-       (etaf-video-studio--placeholder
-        :if (null projects)
-        :title "还没有视频项目" :description "在下面输入标题新建一个")
-       (flex :for (entry projects) :key (plist-get entry :id)
+       (box :height '(lh 1))
+       (flex :for (entry (etaf-video-studio--page-items app 'projects)) :key (plist-get entry :id)
              :flex-direction 'column :width 'stretch
          (etaf-video-studio--project-row
           :project entry :selected (equal current (plist-get entry :id))
           :on-press (lambda () (etaf-video-studio-open-project entry))))
+       (etaf-video-studio--pager :if projects :kind 'projects :count (length projects)
+                                 :page (etaf-video-studio--page app 'projects))
        (box :height '(lh 1))
+       (box :height '(lh 1) :color (etaf-video-studio-color :muted)
+         (text "给新项目起个名字"))
        (flex :flex-direction 'row :width 'stretch :align-items 'center
-             :gap '((lh 0) (ch 1))
+             :gap '((lh 0) (ch 2))
          (flex :flex-grow 1 :flex-basis '(ch 0) :min-width '(ch 0)
-           (etaf-text-input :bind new-title :hide-label t :placeholder "新项目标题"
+           (etaf-text-input :bind new-title :width 'stretch :hide-label t :placeholder "例如：我的第一个教程"
                             :ref 'video-studio-new-title
                             :on-submit (lambda (text)
                                          (etaf-video-studio-create-project text))))
@@ -322,6 +329,7 @@ the first tab of the layout instead of hiding every pane."
        (etaf-video-studio--section-title
         :icon 'video :title (format "片段 (%d)" (length clips))
         :action-label "导入" :action-ref 'video-studio-import
+        :disabled (or pending (null project))
         :on-action (lambda () (call-interactively #'etaf-video-studio-import-files)))
        (etaf-video-studio--placeholder
         :if (null project)
@@ -332,13 +340,15 @@ the first tab of the layout instead of hiding every pane."
         :action-label "导入素材"
         :on-action (lambda () (call-interactively #'etaf-video-studio-import-files)))
        (etaf-video-studio--clip-row
-        :for (clip clips) :key (plist-get clip :id)
+        :for (clip (etaf-video-studio--page-items app 'clips)) :key (plist-get clip :id)
         :clip clip :index (cl-position clip clips :test #'equal)
         :selected (equal selected (cl-position clip clips :test #'equal))
         :on-press (lambda ()
                     (etaf-video-studio-select-clip
-                     (% (cl-position clip clips :test #'equal) 1000))))
-       (box :flex-grow 1 :flex-basis '(lh 0) :min-height '(lh 0))
+                     (cl-position clip clips :test #'equal))))
+       (etaf-video-studio--pager :if clips :kind 'clips :count (length clips)
+                                 :page (etaf-video-studio--page app 'clips))
+       (box :height '(lh 1))
        (flex :flex-direction 'row :width 'stretch :justify-content 'end
              :gap '((lh 0) (ch 1))
          (etaf-button :label "撤销" :variant 'ghost :disabled (or pending (not (plist-get project :undo)))
@@ -351,7 +361,7 @@ the first tab of the layout instead of hiding every pane."
 ;;; Preview pane
 
 (etaf-define-component etaf-video-studio--preview
-    (&key app state layout aside stage-audio)
+    (&key app state width height)
   "Render the native video stage and its controls."
   :render
   (let* ((stage (plist-get state :stage))
@@ -360,9 +370,10 @@ the first tab of the layout instead of hiding every pane."
          (viewport (ignore-errors (etaf-runtime-viewport)))
          (viewport-width (or (car-safe viewport) 800))
          (viewport-rows (or (cdr-safe viewport) 30))
+         (stage-audio (etaf-video-studio--app-stage-audio-ref app))
          (grid (etaf-video-studio--stage-grid
-                (plist-get stage :aspect) viewport-width viewport-rows
-                (not (eq layout 'narrow)) aside))
+                (plist-get stage :aspect) (or width viewport-width)
+                (or height (- viewport-rows 11))))
          (columns (car grid))
          (rows (cdr grid))
          (playing (plist-get state :stage-playing)))
@@ -372,7 +383,8 @@ the first tab of the layout instead of hiding every pane."
            :background-color (etaf-video-studio-color :bg)
        (etaf-video-studio--section-title
         :icon 'video :title "预览"
-        :action-label (if preview "成片预览" "选中片段")
+        :action-label (if (eq (plist-get stage :kind) 'preview) "查看素材"
+                        (if preview "查看成片" "回到片段"))
         :action-ref 'video-studio-stage-source
         :on-action (lambda ()
                      (if (and preview (not (eq (plist-get stage :kind) 'preview)))
@@ -380,21 +392,37 @@ the first tab of the layout instead of hiding every pane."
                        (etaf-video-studio-stage-selected-clip))))
        (etaf-video-studio--placeholder
         :if (null stage)
-        :title "暂无预览" :description "选择片段后生成低清预览，或直接播放素材")
-       (box :if stage :width 'stretch :height (list 'lh (max 1 rows))
-            :overflow 'hidden :background-color (etaf-video-studio-color :stage)
+        :title (if (etaf-video-studio--app-clips app) "选择片段开始剪辑" "添加你的第一段素材")
+        :description "导入已有视频，或录制一个窗口。原文件保持不变。"
+        :action-label "导入视频"
+        :on-action (lambda () (call-interactively #'etaf-video-studio-import-files)))
+       (etaf-button :if (null stage) :label "录制窗口或屏幕" :variant 'secondary
+                    :ref 'video-studio-empty-record :on-press #'etaf-video-studio-show-record)
+       (flex :if stage :flex-direction 'row :justify-content 'center
+             :width 'stretch :height (list 'lh (max 1 rows))
+             :overflow 'hidden :background-color (etaf-video-studio-color :stage)
          (etaf-video :key (plist-get stage :key)
                      :src (plist-get stage :file)
                      :mode 'image :columns columns :rows rows
-                     :autoplay t :audio stage-audio :volume 85
+                     :autoplay nil :audio stage-audio :volume 85
                      :position 'static :handle (plist-get stage :handle)
                      :on-press (lambda ()
                                  (etaf-video-studio-toggle-playback))))
+       (box :if stage :height '(lh 1) :width 'stretch
+         (etaf-range :value (etaf-video-studio--app-stage-time-ref app)
+                     :min 0 :max (max 0.001 (or (plist-get stage :duration) 1))
+                     :key-step 1 :label "定位视频" :ref 'video-studio-seek
+                     :fill-ref 'video-studio-seek-fill
+                     :on-commit #'etaf-video-studio-seek-to))
        (flex :if stage :flex-direction 'row :width 'stretch :align-items 'center
              :gap '((lh 0) (ch 1))
+         (etaf-button :label "−5 秒" :variant 'ghost :ref 'video-studio-back
+                      :on-press #'etaf-video-studio-seek-backward)
          (etaf-button :label (if playing "暂停" "播放") :variant 'secondary
                       :ref 'video-studio-stage-play
                       :on-press (lambda () (etaf-video-studio-toggle-playback)))
+         (etaf-button :label "+5 秒" :variant 'ghost :ref 'video-studio-forward
+                      :on-press #'etaf-video-studio-seek-forward)
          (etaf-ui-toggle-icon :value (etaf-value stage-audio)
                               :off 'volume-mute :on 'volume :set 'svg
                               :size 0.9 :min-width 3
@@ -416,7 +444,7 @@ the first tab of the layout instead of hiding every pane."
        (flex :if (null stage) :flex-direction 'column :width 'stretch
          (etaf-video-studio--section-title
           :icon 'settings :title "快捷动作"
-          :action-label "生成低清预览" :action-ref 'video-studio-render-preview
+          :action-label "生成成片预览" :action-ref 'video-studio-empty-preview
           :disabled (or (null project) (null (etaf-video-studio--app-clips app))
                         (> (or (plist-get state :pending) 0) 0))
           :on-action (lambda () (etaf-video-studio-render-preview)))
@@ -440,34 +468,27 @@ the first tab of the layout instead of hiding every pane."
          (clips (etaf-video-studio--app-clips app))
          (count (length clips)))
     (etaf-view
-     (flex :flex-direction 'column :width 'stretch :row-gap '(lh 1)
+     (flex :flex-direction 'column :width 'stretch :row-gap '(lh 0)
            :padding '((lh 0) (ch 1))
            :background-color (etaf-video-studio-color :bg)
-       (etaf-video-studio--section-title :icon 'settings :title "片段属性")
+       (etaf-video-studio--section-title :icon 'settings :title "片段剪辑")
+       (box :height '(lh 1))
        (etaf-video-studio--placeholder
         :if (null clip)
         :title "未选择片段" :description "在片段列表中选择一个")
        (flex :if clip :flex-direction 'column :width 'stretch :row-gap '(lh 0)
-         (etaf-video-studio--fact :label "编号"
-                                  :value (format "%d / %d" (1+ (or index 0)) count))
          (etaf-video-studio--fact :label "素材"
                                   :value (etaf-video-studio--basename (plist-get clip :file)))
-         (etaf-video-studio--fact :label "源区间"
-                                  :value (format "%s – %ss"
-                                                 (etaf-video-studio--seconds (plist-get clip :in))
-                                                 (etaf-video-studio--seconds (plist-get clip :out))))
          (etaf-video-studio--fact :label "成片"
                                   :value (concat (etaf-video-studio--seconds
                                                   (etaf-video-studio--clip-duration clip))
                                                  "s"))
-         (etaf-video-studio--fact :label "速度"
-                                  :value (format "%sx" (etaf-video-studio--seconds
-                                                        (or (plist-get clip :speed) 1))))
-         (etaf-video-studio--fact :label "增益"
-                                  :value (etaf-video-studio--seconds
-                                          (or (plist-get clip :gain) 1)))
+         (box :height '(lh 1) :color (etaf-video-studio-color :muted)
+           (text "原视频保持不变，所有修改都可撤销。"))
          (box :height '(lh 1))
-         (etaf-video-studio--section-title :icon 'settings :title "裁切（源时间）")
+         (etaf-video-studio--section-title :icon 'settings :title "保留区间 · 原视频秒数")
+         (box :height '(lh 1) :color (etaf-video-studio-color :muted)
+           (text "入点       出点"))
          (flex :flex-direction 'row :width 'stretch :align-items 'center
                :gap '((lh 0) (ch 1))
            (etaf-text-input :bind (etaf-video-studio--app-trim-in-ref app)
@@ -487,16 +508,18 @@ the first tab of the layout instead of hiding every pane."
            (etaf-button :label "分割" :variant 'secondary :disabled pending
                         :ref 'video-studio-split-apply
                         :on-press (lambda () (etaf-video-studio-apply-split)))
-           (etaf-button :label "设入点" :variant 'ghost :disabled pending
+           (etaf-button :label "设入点" :variant 'ghost
+                        :disabled (or pending (not (eq (plist-get (plist-get state :stage) :kind) 'clip)))
                         :ref 'video-studio-mark-in
                         :on-press (lambda () (etaf-video-studio-mark-in)))
-           (etaf-button :label "设出点" :variant 'ghost :disabled pending
+           (etaf-button :label "设出点" :variant 'ghost
+                        :disabled (or pending (not (eq (plist-get (plist-get state :stage) :kind) 'clip)))
                         :ref 'video-studio-mark-out
                         :on-press (lambda () (etaf-video-studio-mark-out))))
          (flex :flex-direction 'row :width 'stretch :align-items 'center
                :gap '((lh 0) (ch 1))
            (etaf-select :bind (etaf-video-studio--app-speed-ref app)
-                        :label "速度" :presentation 'dropdown
+                        :label "速度" :presentation 'dropdown :ref 'video-studio-speed
                         :options '((0.5 . "0.5x") (1 . "1x") (2 . "2x") (4 . "4x")))
            (etaf-button :label "应用速度" :variant 'ghost :disabled pending
                         :ref 'video-studio-speed-apply
@@ -504,11 +527,12 @@ the first tab of the layout instead of hiding every pane."
          (flex :flex-direction 'row :width 'stretch :align-items 'center
                :gap '((lh 0) (ch 1))
            (etaf-select :bind (etaf-video-studio--app-gain-ref app)
-                        :label "增益" :presentation 'dropdown
+                        :label "音量" :presentation 'dropdown :ref 'video-studio-gain
                         :options '((0.5 . "0.5") (0.7 . "0.7") (1 . "1") (1.5 . "1.5")))
-           (etaf-button :label "应用增益" :variant 'ghost :disabled pending
+           (etaf-button :label "应用音量" :variant 'ghost :disabled pending
                         :ref 'video-studio-gain-apply
                         :on-press (lambda () (etaf-video-studio-apply-gain))))
+         (box :height '(lh 1))
          (flex :flex-direction 'row :width 'stretch :align-items 'center
                :justify-content 'end :gap '((lh 0) (ch 1))
            (etaf-button :label "上移" :variant 'ghost
@@ -557,7 +581,7 @@ the first tab of the layout instead of hiding every pane."
          (editing (plist-get state :caption-edit-id))
          (pending (> (or (plist-get state :pending) 0) 0)))
     (etaf-view
-     (flex :flex-direction 'column :width 'stretch :row-gap '(lh 1)
+     (flex :flex-direction 'column :width 'stretch :row-gap '(lh 0)
            :padding '((lh 0) (ch 1))
            :background-color (etaf-video-studio-color :bg)
        (etaf-video-studio--section-title
@@ -569,14 +593,16 @@ the first tab of the layout instead of hiding every pane."
         :if (and project (null captions))
         :title "还没有说明文字" :description "用下方表单在成片时间上添加")
        (etaf-video-studio--caption-row
-        :for (caption captions) :key (plist-get caption :id)
+        :for (caption (etaf-video-studio--page-items app 'captions)) :key (plist-get caption :id)
         :caption caption
         :index (cl-position caption captions :test #'equal)
         :selected (equal selected (cl-position caption captions :test #'equal))
         :on-press (lambda ()
                     (etaf-video-studio-select-caption
-                     (% (cl-position caption captions :test #'equal) 1000))))
-       (box :flex-grow 1 :flex-basis '(lh 0) :min-height '(lh 0))
+                     (cl-position caption captions :test #'equal))))
+       (etaf-video-studio--pager :if captions :kind 'captions :count (length captions)
+                                 :page (etaf-video-studio--page app 'captions))
+       (box :height '(lh 1))
        (etaf-video-studio--section-title
         :icon 'lyrics :title (if editing "编辑说明" "新建说明"))
        (flex :flex-direction 'row :width 'stretch :align-items 'center
@@ -588,7 +614,7 @@ the first tab of the layout instead of hiding every pane."
                           :width '(ch 7) :hide-label t :placeholder "结束秒"
                           :ref 'video-studio-caption-end))
        (etaf-text-input :bind (etaf-video-studio--app-caption-text-ref app)
-                        :hide-label t :placeholder "说明文字" :ref 'video-studio-caption-text
+                        :width 'stretch :hide-label t :placeholder "字幕文字" :ref 'video-studio-caption-text
                         :on-submit (lambda (_text) (etaf-video-studio-add-caption)))
        (flex :flex-direction 'row :width 'stretch :justify-content 'end
              :gap '((lh 0) (ch 1))
@@ -633,7 +659,7 @@ the first tab of the layout instead of hiding every pane."
          (pending (> (or (plist-get state :pending) 0) 0))
          (project (plist-get state :project)))
     (etaf-view
-     (flex :flex-direction 'column :width 'stretch :row-gap '(lh 1)
+     (flex :flex-direction 'column :width 'stretch :row-gap '(lh 0)
            :padding '((lh 0) (ch 1))
            :background-color (etaf-video-studio-color :bg)
        (etaf-video-studio--section-title
@@ -644,22 +670,24 @@ the first tab of the layout instead of hiding every pane."
         :if (null targets)
         :title "还没有目标" :description "刷新后选择窗口或屏幕")
        (etaf-video-studio--target-row
-        :for (target targets) :key (or (plist-get target :id) (plist-get target :name))
+        :for (target (etaf-video-studio--page-items app 'record)) :key (or (plist-get target :id) (plist-get target :name))
         :target target :index (cl-position target targets :test #'equal)
         :selected (equal selected (cl-position target targets :test #'equal))
         :on-press (lambda ()
                     (etaf-video-studio-select-target
-                     (% (cl-position target targets :test #'equal) 1000))))
-       (box :flex-grow 1 :flex-basis '(lh 0) :min-height '(lh 0))
+                     (cl-position target targets :test #'equal))))
+       (etaf-video-studio--pager :if targets :kind 'record :count (length targets)
+                                 :page (etaf-video-studio--page app 'record))
+       (box :height '(lh 1))
        (flex :flex-direction 'row :width 'stretch :align-items 'center
              :gap '((lh 0) (ch 1))
          (etaf-select :bind (etaf-video-studio--app-record-audio-ref app)
-                      :label "声音" :presentation 'dropdown
+                      :label "声音" :presentation 'dropdown :ref 'video-studio-record-audio
                       :options '(("none" . "不录") ("system" . "系统") ("microphone" . "麦克风")
                                  ("both" . "系统+麦克风")))
          (flex :width '(ch 10)
            (etaf-text-input :bind (etaf-video-studio--app-record-duration-ref app)
-                            :hide-label t :placeholder "秒" :ref 'video-studio-record-duration)))
+                            :hide-label t :placeholder "录制上限（秒）" :ref 'video-studio-record-duration)))
        (flex :flex-direction 'row :width 'stretch :align-items 'center
              :justify-content 'end :gap '((lh 0) (ch 2))
          (etaf-badge :if recording :text "录制中" :variant 'danger)
@@ -669,8 +697,8 @@ the first tab of the layout instead of hiding every pane."
                                     (and (null recording) (null selected)))
                       :ref 'video-studio-record-toggle
                       :on-press (lambda () (etaf-video-studio-toggle-record))))
-       (box :height '(lh 1) :color (etaf-video-studio-color :dim)
-         (text "录制默认不录声音；停止后自动导入为新片段。"))
+       (box :height '(lh 1) :color (etaf-video-studio-color :muted)
+         (text "上限单位为秒；停止后自动导入。"))
        (etaf-video-studio--fact
         :if task
         :label "任务"
@@ -689,11 +717,11 @@ the first tab of the layout instead of hiding every pane."
          (revision (plist-get project :revision))
          (confirmed (and preview (equal (plist-get preview :revision) revision))))
     (etaf-view
-     (flex :flex-direction 'column :width 'stretch :row-gap '(lh 1)
+     (flex :flex-direction 'column :width 'stretch :row-gap '(lh 0)
            :padding '((lh 0) (ch 1))
            :background-color (etaf-video-studio-color :bg)
        (etaf-video-studio--section-title
-        :icon 'send :title "发布"
+        :icon 'send :title "导出与发布"
         :action-label (if export "重新导出" "后台导出")
         :action-ref 'video-studio-render-screen
         :disabled (or pending (null project) (null (etaf-video-studio--app-clips app)))
@@ -709,15 +737,17 @@ the first tab of the layout instead of hiding every pane."
         :if export
         :label "成片文件"
         :value (etaf-video-studio--basename (plist-get export :output)))
+       (etaf-button :if export :label "在文件夹中显示成片" :variant 'secondary
+                    :ref 'video-studio-reveal-export :on-press #'etaf-video-studio-show-export)
        (box :height '(lh 1))
        (etaf-select :bind (etaf-video-studio--app-publish-target-ref app)
                     :label "目标"
                     :options '(("telegram" . "Telegram") ("share" . "公开链接")))
        (etaf-text-input :bind (etaf-video-studio--app-publish-chat-ref app)
-                        :hide-label t :placeholder "Telegram chat（分享到链接可留空）"
+                        :width 'stretch :hide-label t :placeholder "Telegram 会话 ID（仅 Telegram 需要）"
                         :ref 'video-studio-publish-chat)
        (etaf-text-input :bind (etaf-video-studio--app-publish-text-ref app)
-                        :hide-label t :placeholder "说明文字（默认项目标题）"
+                        :width 'stretch :hide-label t :placeholder "发布文案（默认项目标题）"
                         :ref 'video-studio-publish-text)
        (flex :flex-direction 'row :width 'stretch :align-items 'center
              :gap '((lh 0) (ch 1))
@@ -730,10 +760,14 @@ the first tab of the layout instead of hiding every pane."
                       :on-press (lambda () (etaf-video-studio-publish-preview))))
        (box :height '(lh 1))
        (flex :if preview :flex-direction 'column :width 'stretch :row-gap '(lh 0)
+         (etaf-video-studio--fact :label "目标"
+                                  :value (format "%s %s" (plist-get preview :target)
+                                                 (or (plist-get preview :chat) "")))
          (etaf-video-studio--fact :label "版本"
                                   :value (format "r%s" (plist-get preview :revision)))
          (etaf-video-studio--fact :label "可见"
-                                  :value (or (plist-get preview :visibility) "—"))
+                                  :value (if (equal (plist-get preview :visibility) "public-link")
+                                             "公开链接" "指定会话"))
          (etaf-video-studio--fact :label "文案"
                                   :value (or (plist-get preview :text) "—"))
          (flex :flex-direction 'row :width 'stretch :justify-content 'end
@@ -748,7 +782,7 @@ the first tab of the layout instead of hiding every pane."
             :color (etaf-video-studio-color :warning)
          (text "项目已变，请重新预览再确认"))
        (box :height '(lh 1) :color (etaf-video-studio-color :dim)
-         (text "发布前先导出；结果不明的发布必须核对回执，不能自动重发。"))))))
+         (text "确认前不会上传。公开链接对所有人可见。"))))))
 
 ;;; Tasks pane
 
@@ -764,15 +798,19 @@ the first tab of the layout instead of hiding every pane."
         :hover-style (unless selected
                        (list :background-color (etaf-video-studio-color :hover)))
         :on-press on-press
-    (etaf-badge :text (or (plist-get task :status) "?")
+    (etaf-badge :text (etaf-video-studio--task-status-label (plist-get task :status))
                 :variant (etaf-video-studio--status-variant (plist-get task :status)))
     (box :height '(lh 1) :color (etaf-video-studio-color :muted)
-      (text (expr (format "%s r%s" (or (plist-get task :kind) "?")
-                          (plist-get task :revision)))))
+      (text (expr (format "%s r%s"
+                          (pcase (plist-get task :kind)
+                            ("render" (if (equal (plist-get task :profile) "preview") "预览" "导出"))
+                            ("record" "录屏") ("publish" "发布") (_ "任务"))
+                          (or (plist-get task :revision) "—")))))
     (box :flex-grow 1 :flex-basis '(ch 0) :min-width '(ch 0) :height '(lh 1)
          :overflow 'hidden :color (etaf-video-studio-color :ink)
-      (text (expr (or (plist-get task :output) (plist-get task :message)
-                      (plist-get task :id) ""))))))
+      (text (expr (or (and (plist-get task :output)
+                           (etaf-video-studio--basename (plist-get task :output)))
+                      (plist-get task :message) (plist-get task :id) ""))))))
 
 (etaf-define-component etaf-video-studio--tasks
     (&key app state)
@@ -787,7 +825,7 @@ the first tab of the layout instead of hiding every pane."
                                             etaf-video-studio--active-statuses)))
                              tasks)))
     (etaf-view
-     (flex :flex-direction 'column :width 'stretch :row-gap '(lh 1)
+     (flex :flex-direction 'column :width 'stretch :row-gap '(lh 0)
            :padding '((lh 0) (ch 1))
            :background-color (etaf-video-studio-color :bg)
        (etaf-video-studio--section-title
@@ -798,13 +836,19 @@ the first tab of the layout instead of hiding every pane."
         :if (null tasks)
         :title "还没有任务" :description "导出、录制或发布后在这里查看")
        (etaf-video-studio--task-row
-        :for (task tasks) :key (plist-get task :id)
+        :for (task (etaf-video-studio--page-items app 'tasks)) :key (plist-get task :id)
         :task task :index (cl-position task tasks :test #'equal)
         :selected (equal selected (cl-position task tasks :test #'equal))
         :on-press (lambda ()
                     (etaf-video-studio-select-task
-                     (% (cl-position task tasks :test #'equal) 1000))))
-       (box :flex-grow 1 :flex-basis '(lh 0) :min-height '(lh 0))
+                     (cl-position task tasks :test #'equal))))
+       (etaf-video-studio--pager :if tasks :kind 'tasks :count (length tasks)
+                                 :page (etaf-video-studio--page app 'tasks))
+       (box :height '(lh 1))
+       (etaf-button :if (etaf-video-studio--app-screen-export app)
+                    :label "在文件夹中显示成片" :variant 'secondary
+                    :ref 'video-studio-task-reveal :on-press #'etaf-video-studio-show-export)
+       (box :height '(lh 1))
        (flex :flex-direction 'row :width 'stretch :justify-content 'end
              :gap '((lh 0) (ch 1))
          (etaf-button :label "续跑导出" :variant 'ghost
@@ -835,6 +879,7 @@ the first tab of the layout instead of hiding every pane."
        (box :if project :height '(lh 1) :color (etaf-video-studio-color :dim)
          (text "·"))
        (box :if project :height '(lh 1) :overflow 'hidden
+            :flex-grow 1 :flex-basis '(ch 0) :min-width '(ch 0)
             :color (etaf-video-studio-color :muted)
          (text (expr (format "%s · r%s · %s"
                              (plist-get project :title)
@@ -868,9 +913,9 @@ the first tab of the layout instead of hiding every pane."
          (box :height '(lh 1) :color (etaf-video-studio-color :dim)
            (text :ref 'video-studio-footer-position :id "video-studio-footer-position"
                  (expr (etaf-video-studio--footer-position-text state)))))
-       (box :height '(lh 1) :padding '((lh 0) (ch 1)) :font-size 16
+       (box :height '(lh 1) :padding '((lh 0) (ch 1))
             :overflow 'hidden :color (etaf-video-studio-color :dim)
-         (text "SPC 播放 · f/b 快退快进 · i/o 入出点 · s 分割 · x 删除 · v 预览 · e 导出 · r 录制 · p 发布 · t 任务 · T 主题 · ? 帮助 · q 关闭"))))))
+         (text "SPC 播放 · i/o 入出点 · s 分割 · u 撤销 · ? 全部快捷键"))))))
 
 (defun etaf-video-studio--stage-stale-p (state)
   "Whether STATE's rendered preview belongs to an older revision."
@@ -901,110 +946,141 @@ the first tab of the layout instead of hiding every pane."
 (etaf-define-component etaf-video-studio--pane (&key app state pane)
   "Render PANE of APP from STATE; the other panes stay unmounted."
   :view
-  (column :width 'stretch :height 'stretch
+  (flex :flex-direction 'column :width 'stretch
     (etaf-video-studio--projects :if (eq pane 'projects) :app app :state state)
     (etaf-video-studio--clips :if (eq pane 'clips) :app app :state state)
-    (etaf-video-studio--preview :if (eq pane 'preview) :app app :state state
-                                :layout 'narrow :aside nil
-                                :stage-audio (etaf-video-studio--app-stage-audio-ref app))
+    (etaf-video-studio--preview :if (eq pane 'preview) :app app :state state)
     (etaf-video-studio--properties :if (eq pane 'properties) :app app :state state)
     (etaf-video-studio--captions :if (eq pane 'captions) :app app :state state)
     (etaf-video-studio--record :if (eq pane 'record) :app app :state state)
     (etaf-video-studio--publish :if (eq pane 'publish) :app app :state state)
     (etaf-video-studio--tasks :if (eq pane 'tasks) :app app :state state)))
 
-(etaf-define-component etaf-video-studio--shell
-    (&key app)
-  "Render the application shell for APP with layout and theme bindings."
+(etaf-define-component etaf-video-studio--welcome (&key app state)
+  "Make the first useful action the centre of the empty workspace."
+  :view
+  (flex :flex-direction 'column :width 'stretch :align-items 'center
+        :padding '((lh 1) (ch 2))
+    (flex :flex-direction 'column :width '(ch 64) :max-width '(% 100)
+          :padding '((lh 1) (ch 2)) :background-color (etaf-video-studio-color :panel)
+      (box :height '(lh 1) :font-weight 'bold :color (etaf-video-studio-color :ink)
+        (text "从一段素材，做成一支视频"))
+      (box :height '(lh 1))
+      (box :color (etaf-video-studio-color :muted)
+        (text "新建项目 → 导入或录屏 → 剪辑与字幕 → 导出"))
+      (box :height '(lh 1))
+      (etaf-video-studio--projects :app app :state state)
+      (box :height '(lh 1))
+      (box :color (etaf-video-studio-color :muted)
+        (text "修改自动保存；裁切和删除片段不会改动原视频。")))))
+
+(etaf-define-component etaf-video-studio--toolbar (&key app state)
+  "Keep the primary workflow visible without remembering shortcuts."
+  :render
+  (let* ((project (plist-get state :project))
+         (clips (etaf-video-studio--app-clips app))
+         (busy (> (or (plist-get state :pending) 0) 0)))
+    (etaf-view
+     (flex :flex-direction 'row :width 'stretch :height '(lh 1)
+           :align-items 'center :gap '((lh 0) (ch 1))
+       (etaf-button :label "导入素材" :variant 'secondary :ref 'video-studio-toolbar-import
+                    :disabled (or busy (null project))
+                    :on-press (lambda () (call-interactively #'etaf-video-studio-import-files)))
+       (etaf-button :label "录屏" :variant 'ghost :ref 'video-studio-toolbar-record
+                    :disabled (null project) :on-press #'etaf-video-studio-show-record)
+       (etaf-button :label "撤销" :variant 'ghost :ref 'video-studio-toolbar-undo
+                    :disabled (or busy (not (plist-get project :undo)))
+                    :on-press #'etaf-video-studio-undo)
+       (etaf-button :label "重做" :variant 'ghost :ref 'video-studio-toolbar-redo
+                    :disabled (or busy (not (plist-get project :redo)))
+                    :on-press #'etaf-video-studio-redo)
+       (box :flex-grow 1 :flex-basis '(ch 0) :min-width '(ch 0))
+       (etaf-button :label "预览成片" :variant 'secondary :ref 'video-studio-render-preview
+                    :disabled (or busy (null clips)) :on-press #'etaf-video-studio-render-preview)
+       (etaf-button :label "导出视频" :variant 'primary :ref 'video-studio-toolbar-export
+                    :disabled (or busy (null clips)) :on-press #'etaf-video-studio-render-screen)))))
+
+(etaf-define-component etaf-video-studio--shell (&key app)
+  "Render stable navigation above a height-budgeted editing workspace."
   :bindings ((theme (etaf-video-studio--app-theme-ref app))
-             (data (etaf-video-studio--app-data-ref app))
-             (stage-audio (etaf-video-studio--app-stage-audio-ref app)))
+             (data (etaf-video-studio--app-data-ref app)))
   :setup
   (etaf-theme-provide theme)
   :render
   (let* ((state (etaf-value data))
-         (viewport (ignore-errors (etaf-runtime-viewport)))
-         (viewport-width (or (car-safe viewport) 800))
-         (viewport-rows (or (cdr-safe viewport) 30))
-         (sidebar (>= viewport-width etaf-video-studio--sidebar-min-pixels))
-         (aside (>= viewport-width etaf-video-studio--aside-min-pixels))
-         (layout (cond (aside 'wide) (sidebar 'medium) (t 'narrow)))
-         (body-rows (max 3 (- viewport-rows 3)))
-         (lay  (let ((keys (mapcar (lambda (item) (plist-get item :key))
-                                   (etaf-video-studio--pane-tabs state layout))))
-                 (if (memq (plist-get state :pane) keys)
-                     (plist-get state :pane)
-                   (car keys))))
-         (bg (etaf-video-studio-color :bg))
-         (ink (etaf-video-studio-color :ink)))
+         (viewport (etaf-runtime-viewport))
+         (width (max (* 80 (frame-char-width)) (or (car viewport) 800)))
+         (rows (max 28 (or (cdr viewport) 30)))
+         (body-rows (- rows 11))
+         (pane (or (plist-get state :pane) 'projects))
+         (home (or (null (plist-get state :project)) (eq pane 'projects)))
+         (split (and (not home) (>= width etaf-video-studio--aside-min-pixels)
+                     (>= body-rows 22)))
+         (timeline (and split (>= body-rows 28)))
+         (aside (if (memq pane '(preview clips)) 'properties pane))
+         (main-width (- width (if split (* 44 (frame-char-width)) 0))))
     (etaf-view
-     (box :position 'relative
-          :width (list 'px viewport-width) :height (list 'lh viewport-rows)
-          :background-color bg :color ink :overflow 'hidden
-          :region (list :id 'video-studio-workspace :label "工作台" :key ?w
-                        :neighbors (list :left 'video-studio-sidebar
-                                         :right 'video-studio-details))
+     (box :position 'relative :width (list 'px width) :height (list 'lh rows)
+          :background-color (etaf-video-studio-color :bg)
+          :color (etaf-video-studio-color :ink) :overflow 'hidden
+          :region (list :id 'video-studio-workspace :label "工作台" :key ?w)
           :keys (list
+                 (list "N" #'etaf-video-studio-create-project "新建项目")
                  (list "a" #'etaf-video-studio-import-files "导入素材")
                  (list "g" #'etaf-video-studio-refresh "刷新项目")
                  (list "u" #'etaf-video-studio-undo "撤销修改")
                  (list "U" #'etaf-video-studio-redo "重做修改")
-                 (list "s" #'etaf-video-studio-split-at-stage "在当前位置分割")
+                 (list "s" #'etaf-video-studio-split-at-stage "当前位置分割")
                  (list "x" #'etaf-video-studio-remove-selected-clip "删除片段")
                  (list "i" #'etaf-video-studio-mark-in "设为入点")
                  (list "o" #'etaf-video-studio-mark-out "设为出点")
                  (list "," #'etaf-video-studio-move-clip-up "片段上移")
                  (list "." #'etaf-video-studio-move-clip-down "片段下移")
-                 (list "v" #'etaf-video-studio-render-preview "生成低清预览")
-                 (list "e" #'etaf-video-studio-render-screen "后台导出成片")
+                 (list "v" #'etaf-video-studio-render-preview "生成成片预览")
+                 (list "e" #'etaf-video-studio-render-screen "导出视频")
                  (list "C" #'etaf-video-studio-cancel-render "取消导出")
-                 (list "c" #'etaf-video-studio-show-captions "字幕面板")
-                 (list "r" #'etaf-video-studio-show-record "录制面板")
+                 (list "c" #'etaf-video-studio-show-captions "字幕")
+                 (list "r" #'etaf-video-studio-show-record "录屏")
                  (list "R" #'etaf-video-studio-toggle-record "开始或停止录制")
-                 (list "p" #'etaf-video-studio-show-publish "发布面板")
-                 (list "t" #'etaf-video-studio-show-tasks "任务面板")
+                 (list "p" #'etaf-video-studio-show-publish "导出与发布")
+                 (list "t" #'etaf-video-studio-show-tasks "后台任务")
                  (list "T" #'etaf-video-studio-toggle-theme "切换主题"))
-       (etaf-video-studio--header :state state)
-       (flex :position 'absolute :left '(px 0) :top '(lh 1)
-             :width (list 'px viewport-width) :height (list 'lh body-rows)
-             :flex-direction 'row :overflow 'hidden
-         (flex :if sidebar :flex-direction 'column
-               :width etaf-video-studio--sidebar-width :flex-shrink 0
-               :height (list 'lh body-rows) :overflow 'hidden
-               :background-color (etaf-video-studio-color :panel)
-               :border-right (etaf-video-studio--border (etaf-video-studio-color :line))
-               :region (list :id 'video-studio-sidebar :label "项目与片段" :key ?f)
-           (etaf-video-studio--projects :app app :state state)
-           (box :height '(lh 1))
-           (etaf-video-studio--clips :app app :state state))
-         (flex :flex-direction 'column :flex-grow 1 :flex-basis '(ch 0)
-               :min-width '(ch 0) :height (list 'lh body-rows) :overflow 'hidden
-           (etaf-tabs :if (not aside)
-                      :items (etaf-video-studio--pane-tabs state layout)
-                      :active (etaf-video-studio--effective-pane state layout)
-                      :on-change (lambda (key) (etaf-video-studio-select-pane key)))
-           (flex :if aside :flex-direction 'row :width 'stretch :height 'stretch
-                 :overflow 'hidden
-             (flex :flex-direction 'column :flex-grow 1 :flex-basis '(ch 0)
-                   :min-width '(ch 0) :height 'stretch :overflow 'hidden
-                   :region (list :id 'video-studio-preview :label "预览" :key ?v)
-               (etaf-video-studio--preview :app app :state state :layout layout
-                                           :aside aside
-                                           :stage-audio stage-audio))
-             (flex :flex-direction 'column :width etaf-video-studio--aside-width
-                   :flex-shrink 0 :height 'stretch :overflow 'hidden
-                   :background-color (etaf-video-studio-color :panel)
-                   :border-left (etaf-video-studio--border (etaf-video-studio-color :line))
-                   :region (list :id 'video-studio-details :label "属性" :key ?d)
-               (etaf-tabs :items (etaf-video-studio--pane-tabs state layout)
-                          :active (etaf-video-studio--effective-pane state layout)
-                          :on-change (lambda (key) (etaf-video-studio-select-pane key)))
-               (etaf-video-studio--pane :app app :state state :pane lay)))
-           (flex :if (not aside) :flex-direction 'column :flex-grow 1 :flex-basis '(lh 0)
-                 :min-height '(lh 0) :overflow 'hidden
-             (etaf-video-studio--pane :app app :state state :pane lay))))
-       (box :position 'absolute :left '(px 0) :top (list 'lh (+ 1 body-rows))
-            :width (list 'px viewport-width) :height '(lh 2) :overflow 'hidden
+       (box :position 'absolute :top '(lh 1) :left '(ch 2)
+            :width (list 'px (- width (* 4 (frame-char-width)))) :height '(lh 1)
+         (etaf-video-studio--header :state state))
+       (box :position 'absolute :top '(lh 3) :left '(ch 2)
+            :width (list 'px (- width (* 4 (frame-char-width)))) :height '(lh 1)
+         (etaf-video-studio--toolbar :app app :state state))
+       (box :position 'absolute :top '(lh 5) :left '(ch 2)
+            :width (list 'px (- width (* 4 (frame-char-width)))) :height '(lh 1)
+         (etaf-tabs :items (etaf-video-studio--pane-tabs state nil)
+                    :active (if home 'projects pane)
+                    :on-change (lambda (key) (etaf-video-studio-select-pane key))))
+       (box :position 'absolute :top '(lh 7) :left '(px 0)
+            :width (list 'px width) :height (list 'lh body-rows) :overflow 'hidden
+         (etaf-video-studio--welcome :if home :app app :state state)
+         (box :if (not home) :width (list 'px main-width) :height (list 'lh body-rows)
+              :region (list :id 'video-studio-preview :label "预览与片段" :key ?v)
+           (etaf-video-studio--preview
+            :if (or split (eq pane 'preview)) :app app :state state
+            :width main-width :height (- body-rows (if timeline 10 0)))
+           (box :if timeline :position 'absolute :top (list 'lh (- body-rows 9))
+                :left '(ch 2) :width (list 'px (- main-width (* 4 (frame-char-width))))
+                :height '(lh 9) :overflow 'hidden
+             (etaf-video-studio--clips :app app :state state))
+           (flex :if (and (not split) (not (eq pane 'preview)))
+                 :flex-direction 'column :width 'stretch :align-items 'center
+             (box :width '(ch 70) :max-width '(% 100)
+               (etaf-video-studio--pane :app app :state state :pane pane))))
+         (box :if split :position 'absolute :left (list 'px main-width) :top '(lh 0)
+              :width '(ch 44) :height (list 'lh body-rows) :padding '((lh 0) (ch 1))
+              :background-color (etaf-video-studio-color :panel)
+              :border-left (etaf-video-studio--border (etaf-video-studio-color :line))
+              :region (list :id 'video-studio-details :label "编辑区" :key ?d)
+           (etaf-video-studio--pane :app app :state state :pane (if (and (eq pane 'clips) (not timeline)) 'clips aside))))
+       (box :position 'absolute :left '(px 0) :top (list 'lh (- rows 4))
+            :width (list 'px width) :height '(lh 4) :padding '((lh 1) (ch 2))
+            :overflow 'hidden :background-color (etaf-video-studio-color :panel2)
          (etaf-video-studio--footer :state state))))))
 
 (provide 'etaf-video-studio-views)

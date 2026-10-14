@@ -1,15 +1,16 @@
-;;; etaf-video-studio-gui-scenarios.el --- Real GUI acceptance -*- lexical-binding: t; -*-
+;;; -*- lexical-binding: t; -*-
+;;; etaf-video-studio-gui-scenarios.el --- Real workbench acceptance
 
 ;; SPDX-License-Identifier: GPL-3.0-or-later
 
 ;;; Commentary:
-;; Load ETAF's scripts/emacs-gui-verifier.el, then call
-;; (etaf-video-studio-gui-run DIRECTORY).  The scenario builds a temporary
-;; project library, generates a real clip with ffmpeg, drives the rendered
-;; controls through native ETAF focus/RET and the documented keys, renders
-;; a real preview and previews a publish without sending anything.  Windows
-;; and displays are listed but no recording is started, so the user's
-;; desktop and microphone stay untouched.
+;; Load through the owning package with ETAF's emacs-gui-verifier available.
+;; `etaf-video-studio-gui-run' drives rendered controls against real generated
+;; media in a temporary library.  It records only the explicitly supplied
+;; verification window, silently, and explicitly stops it after capture starts;
+;; no personal windows or microphone are captured. A 30-second cap is a fallback.  Publication stops at its preview, without sending.
+;; Call from a timer in a dedicated GUI instance and close that instance after
+;; reading result.json.  Evidence stays outside the repository.
 
 ;;; Code:
 
@@ -18,256 +19,267 @@
 (require 'etaf-video-studio)
 (require 'emacs-gui-verifier)
 
-(defvar etaf-video-studio-gui--root nil
-  "Temporary project library of the running scenario.")
-
-(defvar etaf-video-studio-gui--directory nil
-  "Project directory of the running scenario.")
+(defvar etaf-video-studio-gui--root nil "Temporary media library.")
+(defvar etaf-video-studio-gui--window nil "Explicit verification window ID.")
 
 (defun etaf-video-studio-gui--state ()
-  "Read the displayed studio's public state."
+  "Return the displayed application's public state."
   (with-current-buffer "*Video Studio*" (etaf-video-studio-state)))
 
-(defun etaf-video-studio-gui--key (key)
-  "Send KEY to the displayed studio through the command loop."
-  (with-current-buffer "*Video Studio*"
-    (execute-kbd-macro (kbd key))))
-
 (defun etaf-video-studio-gui--wait-idle ()
-  "Wait until the studio has no in-flight CLI request.
-A control disabled by the busy state must not be focused yet."
+  "Wait at most ten seconds for short CLI queries to settle."
   (let ((end (+ (float-time) 10)))
     (while (and (< (float-time) end)
                 (> (plist-get (etaf-video-studio-gui--state) :pending) 0))
-      (sit-for 0.05)
-      (redisplay t))))
+      (sit-for 0.05))
+    (when (> (plist-get (etaf-video-studio-gui--state) :pending) 0)
+      (error "Studio CLI did not settle"))))
+
+(defun etaf-video-studio-gui--key (key)
+  "Deliver KEY through the real application command loop."
+  (with-current-buffer "*Video Studio*" (execute-kbd-macro (kbd key))))
 
 (defun etaf-video-studio-gui--press (ref)
-  "Activate displayed control REF through native focus and RET."
+  "Activate REF through native focus and RET, not model manipulation."
   (etaf-video-studio-gui--wait-idle)
   (let ((runtime (etaf-runtime-for-buffer "*Video Studio*")))
     (unless (etaf-focus runtime ref) (error "Cannot focus %s" ref))
     (execute-kbd-macro (kbd "RET"))))
 
-(defun etaf-video-studio-gui--type (ref text)
-  "Type TEXT into the mounted text input REF through the UI."
+(defun etaf-video-studio-gui--type (ref text &optional replace)
+  "Type TEXT into REF; REPLACE clears its existing nonempty value."
   (let ((runtime (etaf-runtime-for-buffer "*Video Studio*")))
     (unless (etaf-text-input-begin runtime ref) (error "Cannot edit %s" ref))
+    (when replace
+      (execute-kbd-macro (kbd "C-a"))
+      (execute-kbd-macro (kbd "C-k")))
     (execute-kbd-macro (vconcat text))
-    (etaf-text-input-end)))
+    (execute-kbd-macro (kbd "<escape>"))))
 
-(defun etaf-video-studio-gui--studio-frame ()
-  "Return the frame showing the studio buffer."
-  (window-frame (get-buffer-window "*Video Studio*" t)))
+(defun etaf-video-studio-gui--choose (ref label)
+  "Open dropdown REF and activate its visible LABEL through native focus."
+  (etaf-video-studio-gui--press ref)
+  (let ((runtime (etaf-runtime-for-buffer "*Video Studio*"))
+        (remaining 20) found)
+    (while (and (> remaining 0) (not found))
+      (etaf-focus-next runtime)
+      (setq remaining (1- remaining)
+            found (string-match-p
+                   (concat "\\(?:^\\|[[:space:]]\\)" (regexp-quote label)
+                           "\\(?:$\\|[[:space:]]\\)")
+                   (buffer-substring-no-properties (line-beginning-position) (line-end-position)))))
+    (unless found (error "Dropdown option not reachable: %s" label))
+    (execute-kbd-macro (kbd "RET"))))
 
 (defun etaf-video-studio-gui--resize (columns rows)
-  "Make the studio frame COLUMNS by ROWS text cells, leaving maximization.
-The frame resize is applied by the window system asynchronously, so this
-waits for the application's refit to reach the new window before returning;
-otherwise the verifier's pre-settle invariant checkpoint sees the old
-layout in a smaller window."
-  (let* ((frame (etaf-video-studio-gui--studio-frame))
-         (buffer (get-buffer "*Video Studio*")))
+  "Resize only the verification frame to COLUMNS by ROWS."
+  (let* ((buffer (get-buffer "*Video Studio*"))
+         (frame (window-frame (get-buffer-window buffer t))))
     (set-frame-parameter frame 'fullscreen nil)
     (set-frame-size frame columns rows)
     (let ((end (+ (float-time) 5)))
       (while (and (< (float-time) end)
                   (let ((window (get-buffer-window buffer t)))
-                    (or (not window)
-                        (/= (cdr-safe (etaf-runtime-viewport
-                                       (etaf-runtime-for-buffer buffer)))
+                    (or (/= (frame-width frame) columns)
+                        (/= (cdr (etaf-runtime-viewport (etaf-runtime-for-buffer buffer)))
                             (window-body-height window)))))
         (sit-for 0.05)
         (redisplay t)))))
 
 (defun etaf-video-studio-gui--footer-visible-p ()
-  "Whether the studio's last line is inside its window."
-  (let ((buffer (get-buffer "*Video Studio*")))
-    (when buffer
-      (with-current-buffer buffer
-        (pos-visible-in-window-p (1- (point-max)) (get-buffer-window buffer t))))))
-
-(defun etaf-video-studio-gui--check (name predicate)
-  "Return a named assertion for PREDICATE's current public observation."
-  (list (etaf-gui-verifier-assert name (funcall predicate))))
-
-(defun etaf-video-studio-gui--ffmpeg ()
-  "Return the ffmpeg executable used for the generated clip."
-  (or (and (file-executable-p "/opt/homebrew/opt/ffmpeg-full/bin/ffmpeg")
-           "/opt/homebrew/opt/ffmpeg-full/bin/ffmpeg")
-      (executable-find "ffmpeg")
-      (error "GUI acceptance needs ffmpeg")))
+  "Return non-nil when the footer remains inside the verification window."
+  (with-current-buffer "*Video Studio*"
+    (pos-visible-in-window-p (1- (point-max)) (get-buffer-window (current-buffer) t))))
 
 (defun etaf-video-studio-gui--cli (&rest args)
-  "Run one real CLI command with ARGS and return its parsed JSON."
-  (let ((pi-skill (or (executable-find "pi-skill")
-                      (error "GUI acceptance needs the pi-skill CLI")))
-        (buffer (generate-new-buffer " *video-studio-gui-cli*")))
-    (unwind-protect
-        (progn
-          (unless (zerop (apply #'call-process pi-skill nil buffer nil
-                                (append args '("--json"))))
-            (error "CLI failed: %s\n%s" args
-                   (with-current-buffer buffer (buffer-string))))
-          (with-current-buffer buffer
-            (goto-char (point-min))
-            (json-parse-buffer :object-type 'plist :array-type 'list)))
-      (kill-buffer buffer))))
+  "Read the real skill's public JSON response for ARGS."
+  (with-temp-buffer
+    (unless (zerop (apply #'call-process "pi-skill" nil t nil (append args '("--json"))))
+      (error "CLI failed: %s" (buffer-substring-no-properties (point-min) (point-max))))
+    (goto-char (point-min))
+    (json-parse-buffer :object-type 'plist :array-type 'list)))
+
+(defun etaf-video-studio-gui--project ()
+  "Read the current project's public source of truth."
+  (etaf-video-studio-gui--cli
+   "video-project" "status"
+   (plist-get (plist-get (etaf-video-studio-gui--state) :project) :directory)))
 
 (defun etaf-video-studio-gui--prepare ()
-  "Create and fill the temporary project library, returning its root."
-  (let* ((root (make-temp-file "video-studio-gui-" t))
-         (clip (expand-file-name "clip.mp4" root))
-         (ffmpeg (etaf-video-studio-gui--ffmpeg))
-         (log (expand-file-name "ffmpeg.log" root)))
+  "Generate a real ten-second audiovisual source, without creating a project."
+  (setq etaf-video-studio-gui--root (make-temp-file "studio-gui-" t))
+  (let ((ffmpeg (or (and (file-executable-p "/opt/homebrew/opt/ffmpeg-full/bin/ffmpeg")
+                         "/opt/homebrew/opt/ffmpeg-full/bin/ffmpeg")
+                    (executable-find "ffmpeg"))))
     (with-temp-buffer
       (unless (zerop (call-process
-                      ffmpeg nil t nil
-                      "-hide_banner" "-loglevel" "error" "-y"
-                      "-f" "lavfi" "-i" "testsrc=size=640x360:rate=30:duration=10"
-                      "-f" "lavfi" "-i" "sine=frequency=440:duration=10"
-                      "-c:v" "libx264" "-preset" "veryfast" "-pix_fmt" "yuv420p"
-                      "-c:a" "aac" "-shortest" clip))
-        (error "ffmpeg failed:\n%s" (buffer-string))))
-    (ignore log)
-    (let ((created (etaf-video-studio-gui--cli
-                    "video-project" "create" "--title" "GUI 验收"
-                    "--root" root "--yes")))
-      (setq etaf-video-studio-gui--root root
-            etaf-video-studio-gui--directory (plist-get created :directory)))
-    (etaf-video-studio-gui--cli
-     "video-project" "import" etaf-video-studio-gui--directory
-     "--file" clip "--yes")
-    (setq etaf-video-studio-gui--root root)))
+                     ffmpeg nil t nil "-hide_banner" "-loglevel" "error" "-y"
+                     "-f" "lavfi" "-i" "testsrc=size=640x360:rate=30:duration=10"
+                     "-f" "lavfi" "-i" "sine=frequency=440:duration=10"
+                     "-c:v" "libx264" "-preset" "veryfast" "-pix_fmt" "yuv420p"
+                     "-c:a" "aac" "-shortest"
+                     (expand-file-name "教程素材.mp4" etaf-video-studio-gui--root)))
+        (error "FFmpeg: %s" (buffer-substring-no-properties (point-min) (point-max)))))))
 
-(defun etaf-video-studio-gui-run (directory)
-  "Verify the studio against a generated clip and save evidence to DIRECTORY."
-  (let ((actions nil))
+(defun etaf-video-studio-gui-run (directory &optional recording-window)
+  "Verify the complete local workflow into DIRECTORY.
+RECORDING-WINDOW, when non-nil, must be the owned verification window's ID;
+only that window is recorded.  Nil verifies target discovery without capture."
+  (let (actions)
     (cl-labels
-        ((step (name execute predicate &optional screenshot timeout)
+        ((state (key) (plist-get (etaf-video-studio-gui--state) key))
+         (idle () (= 0 (state :pending)))
+         (step (name execute predicate &optional screenshot timeout)
            (push (etaf-gui-verifier-action-create
                   :id name :execute (lambda (_context) (funcall execute))
-                  :settled-p (lambda (_context) (funcall predicate))
-                  :settle-timeout (or timeout 5.0)
+                  :settled-p (lambda (_context) (and (idle) (funcall predicate)))
+                  :settle-timeout (or timeout 15)
                   :assertions (lambda (_context)
-                                (etaf-video-studio-gui--check name predicate))
-                  :screenshot screenshot)
-                 actions))
-         (state (key) (plist-get (etaf-video-studio-gui--state) key))
+                                (list (etaf-gui-verifier-assert name (funcall predicate))))
+                  :screenshot screenshot) actions))
+         (press (name ref predicate &optional screenshot timeout)
+           (step name (lambda () (etaf-video-studio-gui--press ref)) predicate screenshot timeout))
+         (pane (key)
+           (press (format "pane-%s" key) (intern (format "video-studio-tab-%s" key))
+                  (lambda () (eq key (state :pane)))))
          (task-done (kind profile)
            (cl-find-if (lambda (task)
                          (and (equal kind (plist-get task :kind))
                               (equal profile (plist-get task :profile))
-                              (equal "completed" (plist-get task :status))))
-                       (state :tasks))))
-      (step "ready" #'ignore
-            (lambda () (and (state :project) (= 1 (state :clips)))))
-      (step "layout-wide"
-            (lambda () (etaf-video-studio-gui--resize 170 55))
-            (lambda () (and (>= (car-safe (etaf-runtime-viewport
-                                           (etaf-runtime-for-buffer "*Video Studio*")))
-                                1100)
-                            (etaf-video-studio-gui--footer-visible-p)))
-            t)
-      (step "layout-medium"
-            (lambda () (etaf-video-studio-gui--resize 110 40))
-            (lambda () (let ((width (car-safe (etaf-runtime-viewport
-                                               (etaf-runtime-for-buffer "*Video Studio*")))))
-                         (and width (< width 1100) (>= width 700)
-                              (etaf-video-studio-gui--footer-visible-p)))))
-      (step "layout-narrow"
-            (lambda () (etaf-video-studio-gui--resize 80 28))
-            (lambda () (let ((width (car-safe (etaf-runtime-viewport
-                                               (etaf-runtime-for-buffer "*Video Studio*")))))
-                         (and width (< width 700)
-                              (etaf-video-studio-gui--footer-visible-p))))
-            t)
-      (step "layout-restore"
-            (lambda () (etaf-video-studio-gui--resize 170 55))
-            (lambda () (and (>= (car-safe (etaf-runtime-viewport
-                                           (etaf-runtime-for-buffer "*Video Studio*")))
-                                1100)
-                            (etaf-video-studio-gui--footer-visible-p))))
-      (step "clip-select"
-            (lambda () (etaf-video-studio-gui--press 'video-studio-clip-0))
-            (lambda () (and (= 0 (state :clip-index)) (state :stage)))
-            t)
-      (step "properties-pane"
-            (lambda () (etaf-video-studio-select-pane 'properties))
-            (lambda () (eq 'properties (state :pane))))
-      (step "clip-split"
-            (lambda () (etaf-video-studio-gui--press 'video-studio-split-apply))
-            (lambda () (= 2 (state :clips)))
-            t)
-      (step "undo"
-            (lambda () (etaf-video-studio-gui--key "u"))
-            (lambda () (= 1 (state :clips))))
-      (step "preview-render"
-            (lambda () (etaf-video-studio-gui--key "v"))
-            (lambda () (and (state :preview) (state :stage-playing)))
-            t 240)
-      (step "screen-render"
-            (lambda () (etaf-video-studio-gui--key "e"))
-            (lambda () (task-done "render" "screen"))
-            nil 300)
-      (step "targets"
+                              (equal "completed" (plist-get task :status)))) (state :tasks))))
+      (step "welcome" #'ignore (lambda () (= 0 (state :projects))) t)
+      (step "project-title"
+            (lambda () (etaf-video-studio-gui--type 'video-studio-new-title "制作一个教程")) #'idle)
+      (press "create-project" 'video-studio-create (lambda () (state :project)) t)
+      (step "import-source"
             (lambda ()
-              (etaf-video-studio-select-pane 'record)
-              (etaf-video-studio-refresh-targets))
-            (lambda () (or (> (state :record-targets) 0) (state :message)))
-            t)
-      (step "publish-pane"
-            (lambda () (etaf-video-studio-select-pane 'publish))
-            (lambda () (eq 'publish (state :pane))))
-      (step "publish-chat"
-            (lambda () (etaf-video-studio-gui--type 'video-studio-publish-chat "12345"))
-            (lambda () t))
-      (step "publish-preview"
-            (lambda () (etaf-video-studio-gui--press 'video-studio-publish-preview))
-            (lambda () (state :publish-preview))
-            t 60)
-      (step "publish-reset"
-            (lambda () (etaf-video-studio-gui--press 'video-studio-publish-reset))
-            (lambda () (not (state :publish-preview))))
-      (step "light-theme" (lambda () (etaf-video-studio-gui--key "T"))
-            (lambda () (eq etaf-video-studio-theme-mode 'light)) t)
-      (step "dark-theme" (lambda () (etaf-video-studio-gui--key "T"))
-            (lambda () (eq etaf-video-studio-theme-mode 'dark)) t)
+              ;; Script only the external file chooser's answer; the button
+              ;; and application command still run through native focus/RET.
+              (cl-letf (((symbol-function 'read-file-name)
+                         (lambda (&rest _args)
+                           (expand-file-name "教程素材.mp4" etaf-video-studio-gui--root))))
+                (etaf-video-studio-gui--press 'video-studio-toolbar-import)))
+            (lambda () (and (= 1 (state :clips)) (state :stage))) t)
+      (step "seek-paused" (lambda () (etaf-video-studio-seek-to 3))
+            (lambda () (and (< (abs (- 3 (plist-get (state :stage) :position))) 0.2)
+                            (not (state :stage-playing)))))
+      (step "seek-bar-keyboard"
+            (lambda ()
+              (unless (etaf-focus (etaf-runtime-for-buffer "*Video Studio*") 'video-studio-seek)
+                (error "Seek bar not focusable"))
+              (execute-kbd-macro (kbd "<right>")))
+            (lambda () (< (abs (- 4 (plist-get (state :stage) :position))) 0.2)))
+      (press "play" 'video-studio-stage-play (lambda () (state :stage-playing)))
+      (press "pause" 'video-studio-stage-play (lambda () (not (state :stage-playing))))
+      (press "seek-forward" 'video-studio-forward
+             (lambda () (> (plist-get (state :stage) :position) 7)))
+      (press "seek-backward" 'video-studio-back
+             (lambda () (< (plist-get (state :stage) :position) 5)))
+      (pane 'properties)
+      (step "trim-fields"
+            (lambda ()
+              (etaf-video-studio-gui--type 'video-studio-trim-in "1" t)
+              (etaf-video-studio-gui--type 'video-studio-trim-out "9" t)) #'idle)
+      (press "trim" 'video-studio-trim-apply
+             (lambda () (= 2 (plist-get (state :project) :revision))))
+      (step "trim-source-clock" #'ignore
+            (lambda () (< (abs (- 1 (plist-get (state :stage) :position))) 0.2)))
+      (press "split" 'video-studio-split-apply (lambda () (= 2 (state :clips))) t)
+      (press "move-down" 'video-studio-move-down
+             (lambda () (= 1 (state :clip-index))))
+      (press "move-up" 'video-studio-move-up
+             (lambda () (= 0 (state :clip-index))))
+      (press "remove" 'video-studio-remove-clip (lambda () (= 1 (state :clips))))
+      (press "undo" 'video-studio-toolbar-undo (lambda () (= 2 (state :clips))))
+      (press "redo" 'video-studio-toolbar-redo (lambda () (= 1 (state :clips))))
+      (press "undo-again" 'video-studio-toolbar-undo (lambda () (= 2 (state :clips))))
+      (step "speed-select" (lambda () (etaf-video-studio-gui--choose 'video-studio-speed "2x")) #'idle)
+      (press "speed-apply" 'video-studio-speed-apply
+             (lambda () (= 2 (plist-get (car (plist-get (plist-get (etaf-video-studio-gui--project) :plan) :clips)) :speed))))
+      (press "speed-undo" 'video-studio-toolbar-undo #'idle)
+      (step "gain-select" (lambda () (etaf-video-studio-gui--choose 'video-studio-gain "0.7")) #'idle)
+      (press "gain-apply" 'video-studio-gain-apply
+             (lambda () (= 0.7 (plist-get (car (plist-get (plist-get (etaf-video-studio-gui--project) :plan) :clips)) :gain))))
+      (press "gain-undo" 'video-studio-toolbar-undo #'idle)
+      (pane 'captions)
+      (step "caption-fields"
+            (lambda ()
+              (etaf-video-studio-gui--type 'video-studio-caption-start "0")
+              (etaf-video-studio-gui--type 'video-studio-caption-end "2")
+              (etaf-video-studio-gui--type 'video-studio-caption-text "先导入素材，再剪辑视频")) #'idle)
+      (press "caption-add" 'video-studio-caption-add (lambda () (= 1 (state :captions))) t)
+      (press "caption-select" 'video-studio-caption-0 #'idle)
+      (step "caption-text-update"
+            (lambda () (etaf-video-studio-gui--type 'video-studio-caption-text "剪辑完成后，预览并导出" t)) #'idle)
+      (press "caption-update" 'video-studio-caption-add
+             (lambda () (equal "剪辑完成后，预览并导出"
+                               (plist-get (car (plist-get (plist-get (etaf-video-studio-gui--project) :plan) :captions)) :text))))
+      (press "caption-delete" 'video-studio-caption-delete (lambda () (= 0 (state :captions))))
+      (press "caption-undo" 'video-studio-toolbar-undo (lambda () (= 1 (state :captions))))
+      (pane 'record)
+      (step "record-targets" #'ignore (lambda () (> (state :record-targets) 0)) t)
+      (when recording-window
+        (step "record-settings"
+              (lambda ()
+                (let* ((inventory (etaf-video-studio-gui--cli "video-project" "record" "targets"))
+                       (index (cl-position recording-window (plist-get inventory :windows)
+                                           :test #'equal :key (lambda (item) (plist-get item :id)))))
+                  (unless index (error "Owned recording window disappeared"))
+                  (etaf-video-studio-select-target index)
+                  (etaf-video-studio-gui--type 'video-studio-record-duration "30" t))) #'idle)
+        (press "record-owned-window" 'video-studio-record-toggle
+               (lambda () (equal (plist-get (state :record) :status) "recording")) nil 30)
+        (press "stop-owned-recording" 'video-studio-record-toggle
+               (lambda () (or (equal (plist-get (state :record) :status) "stopping")
+                              (task-done "record" nil))))
+        (step "record-imports-clip" #'ignore (lambda () (and (task-done "record" nil)
+                                                           (= 3 (state :clips)))) t 90))
+      (press "render-preview" 'video-studio-render-preview
+             (lambda () (and (state :preview) (eq 'preview (plist-get (state :stage) :kind)))) t 240)
+      (press "play-cut" 'video-studio-stage-play (lambda () (state :stage-playing)))
+      (press "pause-cut" 'video-studio-stage-play (lambda () (not (state :stage-playing))))
+      (press "export" 'video-studio-toolbar-export (lambda () (task-done "render" "screen")) t 300)
+      (pane 'publish)
+      (step "publish-recipient"
+            (lambda () (etaf-video-studio-gui--type 'video-studio-publish-chat "12345")) #'idle)
+      (press "publish-preview-only" 'video-studio-publish-preview
+             (lambda () (state :publish-preview)) t)
+      (press "discard-publish" 'video-studio-publish-reset
+             (lambda () (not (state :publish-preview))))
+      (dolist (size '((170 54 "wide") (110 42 "ordinary") (80 32 "compact") (110 30 "short")))
+        (let ((columns (nth 0 size)) (rows (nth 1 size)) (name (nth 2 size)))
+          (pane 'properties)
+          (step (concat "layout-" name)
+                (lambda () (etaf-video-studio-gui--resize columns rows))
+                #'etaf-video-studio-gui--footer-visible-p t)
+          (press (concat "light-" name) 'video-studio-theme
+                 (lambda () (eq etaf-video-studio-theme-mode 'light)) t)
+          (press (concat "dark-" name) 'video-studio-theme
+                 (lambda () (eq etaf-video-studio-theme-mode 'dark)))))
+      (pane 'projects)
+      (step "project-library" #'ignore (lambda () (= 1 (state :projects))) t)
       (etaf-gui-verifier-run
        (etaf-gui-verifier-scenario-create
-        :name "video-studio-workbench"
-        :claim "Real clip, real CLI, native controls, responsive layouts and preview render"
+        :name "video-studio-workflow"
+        :claim "Real media, native controls, owned-window recording, local export and responsive tools"
         :initialize
         (lambda (context)
           (when (get-buffer "*Video Studio*")
-            (with-current-buffer "*Video Studio*"
-              (ignore-errors (etaf-video-studio-close))))
+            (with-current-buffer "*Video Studio*" (etaf-video-studio-close)))
           (etaf-video-studio-gui--prepare)
-          (set-frame-parameter (selected-frame) 'fullscreen nil)
-          (set-frame-size (selected-frame) 170 55)
-          (let* ((etaf-video-studio-root etaf-video-studio-gui--root)
-                 (buffer (etaf-video-studio-open etaf-video-studio-gui--directory)))
-            (when-let* ((window (get-buffer-window buffer t)))
-              (with-selected-window window (delete-other-windows)))
+          (setq etaf-video-studio-gui--window recording-window)
+          (let ((buffer (etaf-video-studio-open nil etaf-video-studio-gui--root)))
+            (etaf-video-studio-gui--resize 170 54)
             (setf (etaf-gui-verifier-context-target-buffer context) buffer)))
         :actions (nreverse actions)
         :invariants
         (lambda (_context)
-          (let ((buffer (get-buffer "*Video Studio*")))
-            (if (null buffer)
-                (list (etaf-gui-verifier-assert "studio closed" t))
-              (append
-               (etaf-gui-verifier-line-height-assertions buffer)
-               (list (etaf-gui-verifier-assert
-                      "footer is visible"
-                      (etaf-video-studio-gui--footer-visible-p)))))))
-        ;; Closing removes the verifier's target buffer, so it runs as the
-        ;; final completion step instead of an asserted action.
-        :completion
-        (lambda (_context)
-          (etaf-video-studio-gui--key "q")
-          (or (not (get-buffer "*Video Studio*"))
-              (error "The studio did not close"))))
+          (append (etaf-gui-verifier-line-height-assertions (get-buffer "*Video Studio*"))
+                  (list (etaf-gui-verifier-assert "footer visible"
+                                                  (etaf-video-studio-gui--footer-visible-p)))))
+        :completion (lambda (_context)
+                      (etaf-video-studio-gui--key "q")
+                      (not (get-buffer "*Video Studio*"))))
        directory))))
 
 (provide 'etaf-video-studio-gui-scenarios)

@@ -39,7 +39,9 @@ internal.
    record's copy, selections are clamped into the refreshed lists, a
    publish confirmation for another revision is dropped, and the stage
    follows the current revision's completed preview unless the user is
-   watching a clip. A changed stage file is probed once for its size with
+   watching a clip. Accepted edits also refill the selected clip form; polls
+   do not. Opening another project clears the old stage before adopting its
+   replacement. A changed stage file is probed once for its size with
    `video-edit probe`; the result only sizes the canvas.
 4. The shell binds the snapshot ref, the theme ref and the form refs.
    Commands mutate the record and set the snapshot ref, so one publication
@@ -64,19 +66,23 @@ internal.
 - Every mutation carries the revision the form was loaded with. A
   `conflict` answer is reported and the project is re-read; no write is
   retried blindly.
-- Publish has two distinct steps: a preview object names revision, target,
-  visibility and text, and the confirmation sends the *previewed* revision
-  plus `--yes`. A changed revision invalidates the confirmation, and an
-  `unknown` result is reported as needing human verification.
+- Publish has two distinct steps: a preview names revision, target, visibility
+  and text. It retains the reviewed request arguments; confirmation rejects
+  changed arguments as well as changed revisions before adding `--yes`.
+  An `unknown` result requires human verification, never automatic retry.
 - The stage never mounts a missing file, so a stale preview cannot start a
   decoder. A rendered preview is tied to its revision: editing the project
   clears or replaces it instead of presenting an old cut as the new one.
 - Views are side-effect free; requests come from commands and callbacks,
   never from a render.
-- Hidden panes do not exist in the layout: narrow windows mount only the
-  selected pane, wide windows mount the preview and the selected details
-  pane. The layout switches with the published viewport and loses no
-  feature.
+- Hidden panes do not exist in the layout. Compact or short windows mount
+  one tool; sufficiently wide and tall windows keep the preview beside it.
+  Navigation is outside the content region's height budget and never shrinks
+  away. List paging is transient application state; the CLI remains the only
+  owner of the full list and its ordering.
+- The source preview is paused on mount. Its initial seek and edit marks use
+  the same absolute source clock, never an added display-only offset. The
+  seek bar reads a dedicated ref through the catalog's retained fill binding.
 
 ## Failure semantics
 
@@ -91,15 +97,16 @@ internal.
 
 ## Layout and sizing
 
-The shell is a fixed plane: a one-row header, a body sized from the
-published viewport (`etaf-runtime-viewport`, reactive on refit) and a
-two-row footer. The body hosts the sidebar, the preview and the details
-column according to two width thresholds (700 and 1100 logical pixels, the
-same order as the sibling player). The preview canvas is derived from the
-stage's probed aspect, the available centre cells and the frame's cell
-metrics, so a resize reflows instead of stretching the picture. Panes that
-overflow the body are clipped deliberately; 80×24 is the documented
-minimum usable viewport.
+The shell budgets seven rows for its title, action bar and persistent tabs,
+then four for a padded status/key footer. The remaining region shows the
+welcome card or the selected tool. At 1100 logical pixels and 33 viewport
+rows it splits into a preview and a 44-cell editor; from 39 rows the preview
+also leaves nine rows for the ordered clip sequence. Width alone never
+forces an unusable split in a short window. Lists page five rows, keeping
+forms and page controls reachable instead of clipping long collections.
+The video canvas derives its aspect from the source and its size from the
+remaining row and column budget. The supported minimum is 80×28; smaller
+viewports retain that structure with deliberate clipping.
 
 ## Testing
 
