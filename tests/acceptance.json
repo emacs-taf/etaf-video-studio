@@ -11,6 +11,11 @@
   "support": [],
   "cases": [
     {
+      "name": "etaf-video-studio-tests-wide-tool-switch-keeps-controls-live",
+      "file": "tests/etaf-video-studio-tests.el",
+      "purpose": "After switching a wide editor from clips to captions, the selected cue's visible delete control remains enabled and sends its exact operation."
+    },
+    {
       "name": "etaf-video-studio-tests-paged-clips-remain-reachable",
       "file": "tests/etaf-video-studio-tests.el",
       "purpose": "Clip pages expose every entry; native activation selects it and selection reveals its page without losing the selected clip on paging."

@@ -794,5 +794,28 @@ The field's value must be empty or already the desired prefix."
     (let ((operation (etaf-video-studio-tests--edit-operation #'etaf-video-studio-apply-trim)))
       (should (= 2 (plist-get operation :in))))))
 
+(ert-deftest etaf-video-studio-tests-wide-tool-switch-keeps-controls-live ()
+  "Switching from clip editing to captions enables the selected cue's controls."
+  (etaf-video-studio-tests--with-app ()
+    (etaf-video-studio-tests--write
+     "status.json"
+     (etaf-video-studio-tests--project
+      :plan (list :clips (list (etaf-video-studio-tests--clip))
+                  :captions (list (list :id "cue-1" :start 0 :end 2 :text "字幕")))))
+    (etaf-video-studio-open-project "video-1")
+    (etaf-video-studio-tests--settle (current-buffer))
+    (etaf-runtime-refit (etaf-runtime-for-buffer (current-buffer)) 1600 50)
+    (etaf-video-studio-select-pane 'captions)
+    (etaf-video-studio-select-caption 0)
+    (let ((focused (etaf-focus (etaf-runtime-for-buffer (current-buffer))
+                               'video-studio-caption-delete)))
+      (should focused))
+    (execute-kbd-macro (kbd "RET"))
+    (etaf-video-studio-tests--settle (current-buffer))
+    (let ((operation (etaf-video-studio-tests--operation
+                      (car (last (etaf-video-studio-tests--calls-for "edit"))))))
+      (should (equal "cue-1" (plist-get operation :id)))
+      (should (plist-get operation :remove)))))
+
 (provide 'etaf-video-studio-tests)
 ;;; etaf-video-studio-tests.el ends here

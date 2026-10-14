@@ -43,13 +43,13 @@ internal.
    do not. Opening another project clears the old stage before adopting its
    replacement. A changed stage file is probed once for its size with
    `video-edit probe`; the result only sizes the canvas.
-4. The shell binds the snapshot ref, the theme ref and the form refs.
-   Commands mutate the record and set the snapshot ref, so one publication
-   paints the affected panes. The status poll compares a signature of the
-   project (revision, updated time, task statuses and receipts) and only
-   then republishes; the footer clock and play state reach their Hosts
-   through retained content updates instead. Form drafts live in their own
-   refs, so a poll never overwrites what a person typed.
+4. Commands publish one snapshot; the shell subscribes only to project
+   presence and the selected tool. Each mounted region derives an equal-tested
+   projection of the fields it displays, so selecting a clip does not rebuild
+   navigation, project controls or unrelated forms. Draft refs remain separate.
+   The status poll compares project revision, updated time, task statuses and
+   receipts before publishing. Clock Hosts and the seek bar's retained fill
+   update independently; a poll never overwrites what a person typed.
 5. Background work leaves the application: `render`, `record start` and
    `publish` return a task immediately, and the worker runs in a `job-run`
    process group. A completed preview render becomes `:preview`; a
