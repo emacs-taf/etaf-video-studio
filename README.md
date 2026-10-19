@@ -16,7 +16,7 @@ source of truth.
 - macOS with the `macos-screencast` CLI for recording; other platforms can
   import, edit, export and publish.
 - Provider checkouts: `etaf`, `etaf-ui`, `ebox` and `ecss`, either beside
-  this repository (`../etaf` and so on) or two directories up (`../../etaf`)
+  this repository (`../etaf` and so on) or two directories up (`../etaf`)
   as in the workspace checkout.
 
 ## Install and run
