@@ -186,8 +186,11 @@ are the preview region's budget after allocating the editor and clip list."
         :gap '((lh 0) (ch 1)) :padding '((lh 0) (ch 1))
         :background-color (etaf-video-studio-color :panel2)
         :border-bottom (etaf-video-studio--border (etaf-video-studio-color :line))
-    (etaf-ui-icon :name (or icon 'list) :set 'svg :size 0.9 :min-width 2
-                  :color (etaf-video-studio-color :muted))
+    ;; Icons take their colour from an enclosing box: `etaf-ui-icon' writes
+    ;; its :color into the glyph face, which holds only concrete colours,
+    ;; while the box lowers the deferred Theme token and follows a toggle.
+    (box :height '(lh 1) :color (etaf-video-studio-color :muted)
+      (etaf-ui-icon :name (or icon 'list) :set 'svg :size 0.9 :min-width 2))
     (box :height '(lh 1) :font-weight 'bold :color (etaf-video-studio-color :ink)
       (text (expr title)))
     (box :flex-grow 1 :flex-basis '(ch 0) :min-width '(ch 0))
@@ -429,14 +432,13 @@ are the preview region's budget after allocating the editor and clip list."
                       :on-press (lambda () (etaf-video-studio-toggle-playback)))
          (etaf-button :label "+5 秒" :variant 'ghost :ref 'video-studio-forward
                       :on-press #'etaf-video-studio-seek-forward)
-         (etaf-ui-toggle-icon :value (etaf-value stage-audio)
-                              :off 'volume-mute :on 'volume :set 'svg
-                              :size 0.9 :min-width 3
-                              :ref 'video-studio-stage-audio
-                              :color (etaf-video-studio-color :muted)
-                              :on-color (etaf-video-studio-color :accent)
-                              :help-echo "预览声音 (m)"
-                              :on-press (lambda () (etaf-video-studio-toggle-stage-audio)))
+         (box :height '(lh 1)
+              :color (etaf-video-studio-color (if (etaf-value stage-audio) :accent :muted))
+           (etaf-ui-icon :name (if (etaf-value stage-audio) 'volume 'volume-mute)
+                         :set 'svg :size 0.9 :min-width 3
+                         :ref 'video-studio-stage-audio
+                         :help-echo "预览声音 (m)"
+                         :on-press (lambda () (etaf-video-studio-toggle-stage-audio))))
          (etaf-badge :text (if (eq (plist-get stage :kind) 'preview) "成片" "素材")
                      :variant 'info)
          (box :flex-grow 1 :flex-basis '(ch 0) :min-width '(ch 0))
@@ -501,8 +503,8 @@ are the preview region's budget after allocating the editor and clip list."
        (flex :height '(lh 3) :width 'stretch :align-items 'center :column-gap '(ch 2)
              :padding '((lh 1) (ch 3)) :background-color (etaf-video-studio-color :panel2)
              :border-bottom (etaf-video-studio--border (etaf-video-studio-color :line))
-         (etaf-ui-icon :name 'play :set 'svg :size 1 :min-width 2
-                       :color (etaf-video-studio-color :accent))
+         (box :height '(lh 1) :color (etaf-video-studio-color :accent)
+           (etaf-ui-icon :name 'play :set 'svg :size 1 :min-width 2))
          (text :font-weight 'bold "片段剪辑")
          (box :flex-grow 1 :flex-basis '(ch 0) :min-width '(ch 0))
          (text :color (etaf-video-studio-color :muted)
@@ -907,8 +909,8 @@ are the preview region's budget after allocating the editor and clip list."
            :gap '((lh 0) (ch 1)) :padding '((lh 0) (ch 1))
            :background-color (etaf-video-studio-color :panel2)
            :border-bottom (etaf-video-studio--border (etaf-video-studio-color :line))
-       (etaf-ui-icon :name 'video :set 'svg :size 0.9 :min-width 2
-                     :color (etaf-video-studio-color :accent))
+       (box :height '(lh 1) :color (etaf-video-studio-color :accent)
+         (etaf-ui-icon :name 'video :set 'svg :size 0.9 :min-width 2))
        (box :height '(lh 1) :font-weight 'bold :color (etaf-video-studio-color :ink)
          (text "视频工作台"))
        (box :if project :height '(lh 1) :color (etaf-video-studio-color :dim)
@@ -1092,27 +1094,6 @@ are the preview region's budget after allocating the editor and clip list."
           :background-color (etaf-video-studio-color :bg)
           :color (etaf-video-studio-color :ink) :overflow 'hidden
           :region (list :id 'video-studio-workspace :label "工作台" :key ?w)
-          :keys (list
-                 (list "N" #'etaf-video-studio-create-project "新建项目")
-                 (list "a" #'etaf-video-studio-import-files "导入素材")
-                 (list "g" #'etaf-video-studio-refresh "刷新项目")
-                 (list "u" #'etaf-video-studio-undo "撤销修改")
-                 (list "U" #'etaf-video-studio-redo "重做修改")
-                 (list "s" #'etaf-video-studio-split-at-stage "当前位置分割")
-                 (list "x" #'etaf-video-studio-remove-selected-clip "删除片段")
-                 (list "i" #'etaf-video-studio-mark-in "设为入点")
-                 (list "o" #'etaf-video-studio-mark-out "设为出点")
-                 (list "," #'etaf-video-studio-move-clip-up "片段上移")
-                 (list "." #'etaf-video-studio-move-clip-down "片段下移")
-                 (list "v" #'etaf-video-studio-render-preview "生成成片预览")
-                 (list "e" #'etaf-video-studio-render-screen "导出视频")
-                 (list "C" #'etaf-video-studio-cancel-render "取消导出")
-                 (list "c" #'etaf-video-studio-show-captions "字幕")
-                 (list "r" #'etaf-video-studio-show-record "录屏")
-                 (list "R" #'etaf-video-studio-toggle-record "开始或停止录制")
-                 (list "p" #'etaf-video-studio-show-publish "导出与发布")
-                 (list "t" #'etaf-video-studio-show-tasks "后台任务")
-                 (list "T" #'etaf-video-studio-toggle-theme "切换主题"))
        (box :position 'absolute :left '(px 0) :top '(lh 0)
             :width (list 'px width) :height (list 'lh rows)
             :background-color (etaf-video-studio-color :bg))

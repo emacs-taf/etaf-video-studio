@@ -8,6 +8,13 @@ All notable changes to this project are documented here, following
 
 ### Changed
 
+- The studio runs as an ETAF application: its keys are root keys of the
+  shell, so help lists play/pause, seeking, preview sound and close with
+  labels too; cells outside the shell take the theme's page colour; and the
+  View refits through the Runtime instead of a global resize hook. CLI
+  queries run through `etaf-process-run`. Requires ETAF 0.3.0 and ETAF UI
+  0.2.0.
+
 - Redesign the clip inspector as one framed panel: a title band, a scrolling
   body and a fixed footer with 上移／下移 and 删除. Controls stay one standard
   row with plain filled surfaces instead of bordered boxes, groups are
@@ -28,6 +35,12 @@ All notable changes to this project are documented here, following
   revealed directly in the file manager from the export or task view.
 
 ### Fixed
+
+- `?` opens help in a graphical frame again. Icons received deferred Theme
+  tokens as face colours, which Emacs rejected (logging "Invalid face
+  attribute" on every redisplay) and help's dimmed backdrop could not paint;
+  icons now take concrete colours from their enclosing box and still follow
+  the theme.
 
 - Align the clip editor's labels, values and actions in separate trim, split
   and playback groups. Widen time fields for fractional-second source times;

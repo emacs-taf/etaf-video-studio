@@ -2,8 +2,8 @@
 
 ;; SPDX-License-Identifier: GPL-3.0-or-later
 ;; Author: ETAF contributors
-;; Version: 0.1.0
-;; Package-Requires: ((emacs "29.1") (etaf "0.2.1") (etaf-ui "0.1.0") (ebox "3.0.0"))
+;; Version: 0.1.1
+;; Package-Requires: ((emacs "29.1") (etaf "0.3.0") (etaf-ui "0.2.0") (ebox "3.0.0"))
 ;; Keywords: multimedia, tools, ui
 ;; URL: https://github.com/emacs-taf/etaf-video-studio
 
@@ -22,8 +22,10 @@
 ;; project file itself.  The CLI (`pi-skill video-project') must be
 ;; installed and `ffmpeg' must provide libass for burned-in captions.
 ;;
-;; A session is one buffer (`*Video Studio*') showing one project.  The
-;; shell starts with project creation and recent projects.  Persistent tools
+;; A session is one ETAF application buffer (`*Video Studio*') showing one
+;; project.  Its keys belong to the shell, so `?' lists every one with its
+;; label; the canvas surface follows the theme and the View refits when its
+;; window settles at a new size.  The shell starts with project creation and recent projects.  Persistent tools
 ;; and named tabs lead to the clip sequence, native preview with a seek bar,
 ;; editing forms, captions, recording, exports and tasks.  Wide, tall windows
 ;; put the preview and sequence beside the editor; compact windows show one
@@ -52,10 +54,11 @@
 ;;
 ;; Function: etaf-video-studio-close ()
 ;;;###autoload (autoload 'etaf-video-studio-close "etaf-video-studio" nil t)
-;; Close the studio in the current buffer.
+;; Close the studio in the current buffer and return t.
 ;; The status timers and in-flight CLI queries are cancelled and the ETAF
-;; Runtime is unmounted.  Background jobs (render, record, publish) belong
-;; to `job-run' and keep running.
+;; Runtime is unmounted; killing the buffer releases the same resources.
+;; Background jobs (render, record, publish) belong to `job-run' and keep
+;; running.  Outside a studio buffer it signals `user-error'.
 ;;
 ;; Function: etaf-video-studio-state ()
 ;;;###autoload (autoload 'etaf-video-studio-state "etaf-video-studio" nil t)

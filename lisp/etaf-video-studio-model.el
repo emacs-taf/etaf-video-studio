@@ -54,11 +54,11 @@ are the reactive cells the views bind."
   poll-timer stage-timer poll-tick poll-signature
   stage-handle stage-generation stage-playing stage-position)
 
-(defun etaf-video-studio--make-app (buffer &optional root)
-  "Create an application record for BUFFER rooted at ROOT.
-ROOT nil leaves the project root to the CLI default."
+(defun etaf-video-studio--make-app (&optional root)
+  "Create an application record rooted at ROOT.
+ROOT nil leaves the project root to the CLI default.  The buffer is set
+once the application has opened."
   (etaf-video-studio--app--create
-   :buffer buffer
    :root root
    :pane 'projects
    :pages nil

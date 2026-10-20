@@ -145,8 +145,10 @@ windows show one tool at a time. 项目 always opens the project card instead
 of reserving an empty sidebar, and 任务 occupies space only when selected.
 The minimum usable viewport is 80 columns by 28 rows; below that the layout
 keeps its structure and the window clips deliberately. The footer always
-carries the key hints; `?` opens ETAF's full help, `M-g` jumps between
-regions and TAB moves focus.
+carries the key hints; `?` opens ETAF's full help with every studio key and
+its label, `M-g` jumps between regions and TAB moves focus. The View refits
+when its window settles at a new size, and the area outside the shell keeps
+the studio's page colour in both themes.
 
 ## State and programmatic use
 
@@ -154,7 +156,8 @@ regions and TAB moves focus.
 `etaf-video-studio-open`, `etaf-video-studio-open-project`,
 `etaf-video-studio-create-project`, `etaf-video-studio-import-files` and
 the command functions cover the documented workflows, and
-`etaf-video-studio-close` releases timers and in-flight queries. The root
+`etaf-video-studio-close` (or killing the buffer) releases timers and
+in-flight queries. The root
 entry Commentary is the authoritative interface list.
 
 ```elisp

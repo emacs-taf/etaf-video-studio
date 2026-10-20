@@ -121,6 +121,16 @@
       "purpose": "The documented pane, refresh, theme, undo and close keys drive the application through the command loop."
     },
     {
+      "name": "etaf-video-studio-tests-faces-hold-concrete-colors",
+      "file": "tests/etaf-video-studio-tests.el",
+      "purpose": "Every pane, in both themes and with preview sound toggled, paints concrete face colours and never a deferred Theme token."
+    },
+    {
+      "name": "etaf-video-studio-tests-canvas-and-help-follow-the-application",
+      "file": "tests/etaf-video-studio-tests.el",
+      "purpose": "The canvas surface follows the dark and light theme, help labels the playback, audio and close keys, and close outside a studio signals user-error."
+    },
+    {
       "name": "etaf-video-studio-tests-layout-switches-and-keeps-drafts",
       "file": "tests/etaf-video-studio-tests.el",
       "purpose": "Refitting switches narrow and wide layouts and an already typed form draft still reaches the next edit."

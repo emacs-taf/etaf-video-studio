@@ -8,7 +8,8 @@
 ;; change can never leak a half-updated set of colors, plus the projection
 ;; into the ETAF UI token names used by the standard catalog.  Every view
 ;; reads colors through `etaf-video-studio-color'; `etaf-theme-provide'
-;; receives the token plist from `etaf-video-studio-theme-defaults'.  The
+;; receives the token plist from `etaf-video-studio-theme-defaults', which
+;; derives the catalog tokens with `etaf-ui-theme-tokens'.  The
 ;; palette is four depth steps (page, card, bar, control) plus state
 ;; surfaces, so panes stay separated in both appearances.
 
@@ -16,6 +17,7 @@
 
 (require 'cl-lib)
 (require 'etaf)
+(require 'etaf-ui)
 
 (defconst etaf-video-studio-palettes
   '((dark
@@ -84,113 +86,66 @@ without relying on an unrelated snapshot projection being invalidated."
                         color))))
 
 (defun etaf-video-studio-theme-defaults (&optional mode)
-  "Return the ETAF UI token plist for MODE (default the current mode).
+  "Return the Theme token plist for MODE (default the current mode).
 The application passes the result to `etaf-theme-provide' before mounting,
-otherwise etaf-ui Components (buttons, badges, inputs, ranges) keep their
-own light defaults and the app looks half-themed.  Sources, fields and
-selects are exercised by this app, so every relevant catalog token is set."
+so etaf-ui Components (buttons, badges, inputs, ranges, help) share the
+studio palette.  The palette's raw colors come first as `:video-studio-*'
+tokens; the catalog tokens are derived by `etaf-ui-theme-tokens' after the
+few values where the studio departs from the derived role."
   (let* ((mode (or mode etaf-video-studio-theme-mode))
          (c (lambda (key) (etaf-video-studio-color key mode)))
          (bg (funcall c :bg))
          (panel (funcall c :panel))
          (panel2 (funcall c :panel2))
          (panel3 (funcall c :panel3))
-         (hover (funcall c :hover))
          (ink (funcall c :ink))
-         (muted (funcall c :muted))
-         (dim (funcall c :dim))
          (accent (funcall c :accent))
+         (accent-fg (funcall c :accent-fg))
          (accent-soft (funcall c :accent-soft))
-         (border (funcall c :border))
          (line (funcall c :line)))
     (append
      (cl-loop for (key . color) in (alist-get mode etaf-video-studio-palettes)
               append (list (intern (concat ":video-studio-" (substring (symbol-name key) 1)))
                            color))
      (list
-     ;; Page, text and structure.
-     :ui-fg ink
-     :ui-bg bg
-     :ui-border border
-     :ui-muted-fg muted
-     :ui-divider-bg line
-     :ui-panel-fg ink
-     :ui-panel-bg panel
-     :ui-panel-border (funcall c :frame)
-     ;; Buttons and selection controls.
-     :ui-accent accent
-     :ui-accent-fg (funcall c :accent-fg)
-     :ui-accent-soft-bg accent-soft
-     :ui-button-primary-fg (funcall c :accent-fg)
-     :ui-button-primary-bg accent
-     :ui-button-primary-hover-bg (etaf-video-studio--mix accent (funcall c :accent-fg) 0.12)
-     :ui-button-secondary-fg accent
-     :ui-button-secondary-bg accent-soft
-     :ui-button-secondary-hover-bg (etaf-video-studio--mix accent-soft hover 0.35)
-     :ui-button-ghost-fg muted
-     :ui-button-ghost-hover-bg panel3
-     :ui-checkbox-enabled-fg ink
-     :ui-checkbox-disabled-fg dim
-     ;; Fields, pickers and search.  Outlined fields are flat filled
-     ;; surfaces: no outline, no radius, one standard row.
-     :ui-input-padding '((lh 0) (ch 2))
-     :ui-input-radius '(px 0)
-     :ui-input-bg panel2
-     :ui-input-border panel2
-     :ui-search-bg panel3
-     :ui-search-fg ink
-     :ui-picker-item-bg panel2
-     :ui-picker-item-fg ink
-     :ui-picker-item-muted-fg muted
-     ;; Status surfaces.
-     :ui-success-fg (funcall c :ok)
-     :ui-success-bg (funcall c :ok-bg)
-     :ui-success-border (funcall c :ok)
-     :ui-danger-fg (funcall c :danger)
-     :ui-danger-bg (funcall c :danger-bg)
-     :ui-danger-border (funcall c :danger)
-     :ui-warning-fg (funcall c :warning)
-     :ui-warning-bg (funcall c :warning-bg)
-     :ui-warning-border (funcall c :warning)
-     :ui-info-fg (funcall c :info)
-     :ui-info-bg (funcall c :info-bg)
-     :ui-info-border (funcall c :info)
-     :ui-disabled-fg dim
-     :ui-disabled-bg panel2
-     :ui-disabled-border border
-     ;; Data surfaces.
-     :ui-table-border line
-     :ui-table-selected-fg ink
-     :ui-table-selected-bg accent-soft
-     :ui-data-grid-error-fg (funcall c :danger)
-     :ui-pagination-muted-fg muted
-     ;; Progress and ranges.
-     :ui-progress-track panel3
-     :ui-range-track panel3
-     :ui-range-fill accent
-     ;; Desktop surface tokens, unused by this app but part of the contract
-     ;; a full catalog theme provides.
-     :ui-shell-bg bg
-     :ui-shell-fg ink
-     :ui-shell-muted-fg muted
-     :ui-shell-item-fg ink
-     :ui-shell-item-minimized-fg dim
-     :ui-window-bg panel
-     :ui-window-fg ink
-     :ui-window-border border
-     :ui-window-title-bg panel2
-     :ui-window-title-fg muted
-     :ui-window-title-active-fg ink
-     ;; Playing-card tokens carry over so a nested catalog component is themed.
-     :ui-playing-card-bg panel
-     :ui-playing-card-black ink
-     :ui-playing-card-red (funcall c :danger)
-     :ui-playing-card-back-bg accent-soft
-     :ui-playing-card-back-fg accent
-     :ui-playing-card-empty-bg panel3
-     :ui-playing-card-empty-fg dim
-     :ui-playing-card-selected-bg accent-soft
-     :ui-playing-card-hover-bg hover))))
+      ;; Hovers are lighter or tonal steps of their resting fill.
+      :ui-button-primary-hover-bg (etaf-video-studio--mix accent accent-fg 0.12)
+      :ui-button-secondary-hover-bg
+      (etaf-video-studio--mix accent-soft (funcall c :hover) 0.35)
+      :ui-button-ghost-hover-bg panel3
+      ;; Outlined fields are flat filled surfaces: no outline, no radius,
+      ;; one standard row.
+      :ui-input-padding '((lh 0) (ch 2))
+      :ui-input-radius '(px 0)
+      :ui-input-bg panel2
+      :ui-input-border panel2
+      :ui-search-bg panel3
+      :ui-search-fg ink
+      ;; Recessed controls sit one depth step above their panel, separators
+      ;; use the quiet line and framed panels the stronger frame.
+      :ui-picker-item-bg panel2
+      :ui-disabled-bg panel2
+      :ui-divider-bg line
+      :ui-table-border line
+      :ui-table-selected-fg ink
+      :ui-panel-border (funcall c :frame)
+      :ui-shell-bg bg
+      :ui-shell-item-fg ink
+      :ui-window-bg panel
+      :ui-window-title-bg panel2)
+     (etaf-ui-theme-tokens
+      (list :bg bg :fg ink :panel panel :track panel3
+            :border (funcall c :border) :muted (funcall c :muted)
+            :dim (funcall c :dim) :accent accent :accent-fg accent-fg
+            :accent-soft accent-soft
+            :success (funcall c :ok) :success-bg (funcall c :ok-bg)
+            :success-border (funcall c :ok)
+            :warning (funcall c :warning) :warning-bg (funcall c :warning-bg)
+            :warning-border (funcall c :warning)
+            :danger (funcall c :danger) :danger-bg (funcall c :danger-bg)
+            :danger-border (funcall c :danger)
+            :info (funcall c :info) :info-bg (funcall c :info-bg)
+            :info-border (funcall c :info))))))
 
 (defun etaf-video-studio--mix (from to amount)
   "Return FROM mixed AMOUNT of the way toward TO.

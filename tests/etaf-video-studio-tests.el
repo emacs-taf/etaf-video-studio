@@ -603,6 +603,79 @@ The field's value must be empty or already the desired prefix."
     (execute-kbd-macro (kbd "q"))
     (should-not (get-buffer "*Video Studio*"))))
 
+;; Emacs ignores a face attribute that is not a color and logs it on every
+;; redisplay; help's dimmed backdrop cannot paint it at all.
+(defun etaf-video-studio-tests--deferred-faces (buffer)
+  "Return the deferred Theme tokens left in BUFFER's face properties."
+  (with-current-buffer buffer
+    (let ((position (point-min)) found walk)
+      (setq walk (lambda (value)
+                   (cond ((etaf-theme-token-p value) (push (nth 1 value) found))
+                         ((consp value)
+                          (funcall walk (car value))
+                          (funcall walk (cdr value))))))
+      (while (< position (point-max))
+        (funcall walk (get-text-property position 'face))
+        (setq position (next-single-property-change position 'face nil (point-max))))
+      (delete-dups found))))
+
+(ert-deftest etaf-video-studio-tests-faces-hold-concrete-colors ()
+  "Every pane paints concrete colors in both themes, including its icons."
+  (etaf-video-studio-tests--with-app ()
+    (etaf-video-studio-tests--write
+     "list.json"
+     (list :ok t
+           :projects (list (list :id "video-1" :title "教程样例"
+                                 :directory (expand-file-name
+                                             "video-1" etaf-video-studio-tests--root)
+                                 :updated "2026-10-13T00:00:00Z" :revision 1))
+           :root etaf-video-studio-tests--root))
+    (etaf-video-studio-tests--write
+     "status.json"
+     (etaf-video-studio-tests--project
+      :revision 1 :duration 5
+      :plan (list :version 1 :clips (list (etaf-video-studio-tests--clip)) :captions nil)))
+    (should-not (etaf-video-studio-tests--deferred-faces (current-buffer)))
+    (etaf-video-studio-refresh)
+    (etaf-video-studio-tests--settle (current-buffer))
+    (etaf-video-studio-open-project "video-1")
+    (etaf-video-studio-tests--settle (current-buffer))
+    (etaf-runtime-refit (etaf-runtime-for-buffer (current-buffer)) 1600 60)
+    (dolist (theme '(dark light))
+      (unless (eq theme etaf-video-studio-theme-mode)
+        (execute-kbd-macro (kbd "T")))
+      (dolist (pane '(projects clips preview properties captions record publish tasks))
+        (etaf-video-studio-select-pane pane)
+        (etaf-video-studio-tests--settle (current-buffer))
+        (let ((tokens (etaf-video-studio-tests--deferred-faces (current-buffer))))
+          (should (equal (list theme pane nil) (list theme pane tokens)))))
+      (execute-kbd-macro (kbd "m"))
+      (let ((tokens (etaf-video-studio-tests--deferred-faces (current-buffer))))
+        (should (equal (list theme 'audio nil) (list theme 'audio tokens)))))))
+
+(ert-deftest etaf-video-studio-tests-canvas-and-help-follow-the-application ()
+  "The canvas surface follows the theme and help labels every studio key."
+  (etaf-video-studio-tests--with-app ()
+    (let ((surface (lambda ()
+                     (plist-get (car (last (alist-get 'default face-remapping-alist)))
+                                :background))))
+      (should (equal (funcall surface) "#0b0e14"))
+      (execute-kbd-macro (kbd "T"))
+      (should (equal (funcall surface) "#eef2f7")))
+    (let* ((data (etaf-help-data (etaf-runtime-for-buffer (current-buffer))))
+           (entries (apply #'append (mapcar (lambda (group) (plist-get group :entries))
+                                            (plist-get data :groups))))
+           (labels (mapcar (lambda (key)
+                             (plist-get (cl-find key entries
+                                                 :key (lambda (entry) (plist-get entry :key))
+                                                 :test #'equal)
+                                        :label))
+                           '("SPC" "f" "b" "m" "q"))))
+      (should (equal labels '("播放／暂停" "快进 5 秒" "后退 5 秒"
+                              "开启／关闭预览声音" "关闭工作台"))))
+    (with-temp-buffer
+      (should-error (etaf-video-studio-close) :type 'user-error))))
+
 (ert-deftest etaf-video-studio-tests-layout-switches-and-keeps-drafts ()
   "Refitting switches the layout without losing a form draft."
   (etaf-video-studio-tests--with-app ()

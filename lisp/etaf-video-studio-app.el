@@ -4,8 +4,8 @@
 
 ;;; Commentary:
 ;;
-;; The application face of the video studio: the mountable View, the buffer
-;; keymap, the lifecycle and the public commands listed in the root entry.
+;; The application face of the video studio: the mountable View, its root
+;; keys, the lifecycle and the public commands listed in the root entry.
 ;; Every command is one `video-project' invocation; long operations return a
 ;; task immediately and the background job belongs to `job-run', so closing
 ;; this application neither waits for nor stops an export, a recording or a
@@ -42,67 +42,48 @@ displayed project with no running task about every twelve seconds."
   :type 'integer
   :group 'etaf-video-studio)
 
-(defvar-local etaf-video-studio--app nil
-  "Application record owned by the current buffer.")
-
-(defvar etaf-video-studio--size-hook-installed nil
-  "Whether the window size hook was installed.")
-
-(defvar etaf-video-studio-mode-map
-  (let ((map (make-sparse-keymap)))
-    (define-key map (kbd "a") #'etaf-video-studio-import-files)
-    (define-key map (kbd "N") #'etaf-video-studio-create-project)
-    (define-key map (kbd "g") #'etaf-video-studio-refresh)
-    (define-key map (kbd "u") #'etaf-video-studio-undo)
-    (define-key map (kbd "U") #'etaf-video-studio-redo)
-    (define-key map (kbd "s") #'etaf-video-studio-split-at-stage)
-    (define-key map (kbd "x") #'etaf-video-studio-remove-selected-clip)
-    (define-key map (kbd "i") #'etaf-video-studio-mark-in)
-    (define-key map (kbd "o") #'etaf-video-studio-mark-out)
-    (define-key map (kbd ",") #'etaf-video-studio-move-clip-up)
-    (define-key map (kbd ".") #'etaf-video-studio-move-clip-down)
-    (define-key map (kbd "v") #'etaf-video-studio-render-preview)
-    (define-key map (kbd "e") #'etaf-video-studio-render-screen)
-    (define-key map (kbd "C") #'etaf-video-studio-cancel-render)
-    (define-key map (kbd "r") #'etaf-video-studio-show-record)
-    (define-key map (kbd "R") #'etaf-video-studio-toggle-record)
-    (define-key map (kbd "p") #'etaf-video-studio-show-publish)
-    (define-key map (kbd "c") #'etaf-video-studio-show-captions)
-    (define-key map (kbd "t") #'etaf-video-studio-show-tasks)
-    (define-key map (kbd "m") #'etaf-video-studio-toggle-stage-audio)
-    (define-key map (kbd "f") #'etaf-video-studio-seek-forward)
-    (define-key map (kbd "b") #'etaf-video-studio-seek-backward)
-    (define-key map (kbd "T") #'etaf-video-studio-toggle-theme)
-    map)
-  "Keymap of a video studio buffer.
-The renderer's minor-mode map owns SPC and q; those two live in
-`etaf-video-studio--command-maps' instead.")
-
-(defvar etaf-video-studio--command-maps
-  (list
-   (cons 'etaf-video-studio--app
-         (let ((map (make-sparse-keymap)))
-           ;; The renderer owns SPC, n and q; an `emulation-mode-map-alists'
-           ;; entry wins over every minor mode, so the application replaces
-           ;; the two it really needs here and leaves n alone.
-           (set-keymap-parent map etaf-video-studio-mode-map)
-           (define-key map (kbd "SPC") #'etaf-video-studio-toggle-playback)
-           (define-key map (kbd "q") #'etaf-video-studio-close)
-           map)))
-  "Application bindings that must beat the renderer's own minor-mode map.
-The alist key is the buffer-local `etaf-video-studio--app' variable, so the
-entry is active exactly in an application buffer.")
+;; The keys are the shell's root `:keys': help lists them with these labels,
+;; a focused control keeps its own RET, and the renderer keeps `n' and `?'.
+(defconst etaf-video-studio--bindings
+  '(("SPC" etaf-video-studio-toggle-playback "播放／暂停")
+    ("f" etaf-video-studio-seek-forward "快进 5 秒")
+    ("b" etaf-video-studio-seek-backward "后退 5 秒")
+    ("m" etaf-video-studio-toggle-stage-audio "开启／关闭预览声音")
+    ("N" etaf-video-studio-create-project "新建项目")
+    ("a" etaf-video-studio-import-files "导入素材")
+    ("g" etaf-video-studio-refresh "刷新项目")
+    ("u" etaf-video-studio-undo "撤销修改")
+    ("U" etaf-video-studio-redo "重做修改")
+    ("s" etaf-video-studio-split-at-stage "当前位置分割")
+    ("x" etaf-video-studio-remove-selected-clip "删除片段")
+    ("i" etaf-video-studio-mark-in "设为入点")
+    ("o" etaf-video-studio-mark-out "设为出点")
+    ("," etaf-video-studio-move-clip-up "片段上移")
+    ("." etaf-video-studio-move-clip-down "片段下移")
+    ("v" etaf-video-studio-render-preview "生成成片预览")
+    ("e" etaf-video-studio-render-screen "导出视频")
+    ("C" etaf-video-studio-cancel-render "取消导出")
+    ("c" etaf-video-studio-show-captions "字幕")
+    ("r" etaf-video-studio-show-record "录屏")
+    ("R" etaf-video-studio-toggle-record "开始或停止录制")
+    ("p" etaf-video-studio-show-publish "导出与发布")
+    ("t" etaf-video-studio-show-tasks "后台任务")
+    ("T" etaf-video-studio-toggle-theme "切换主题")
+    ("q" etaf-video-studio-close "关闭工作台"))
+  "Root keys of the studio, as (KEY COMMAND LABEL).")
 
 ;;; Lifecycle
 
 (defun etaf-video-studio--current ()
   "Return the current buffer's application, or signal `user-error'."
-  (or etaf-video-studio--app
-      (user-error "Not an etaf-video-studio buffer")))
+  (let ((app (etaf-app-state)))
+    (if (etaf-video-studio--app-p app)
+        app
+      (user-error "Not an etaf-video-studio buffer"))))
 
 (defun etaf-video-studio--view (app)
   "Return the mountable View for APP."
-  (etaf-view (etaf-video-studio--shell :app app)))
+  (etaf-view (etaf-video-studio--shell :app app :keys etaf-video-studio--bindings)))
 
 (defun etaf-video-studio--cancel-timers (app)
   "Cancel APP's timers."
@@ -113,30 +94,16 @@ entry is active exactly in an application buffer.")
     (cancel-timer timer)
     (setf (etaf-video-studio--app-stage-timer app) nil)))
 
-(defun etaf-video-studio--cleanup ()
-  "Release the current buffer's timers and in-flight requests."
-  (when etaf-video-studio--app
-    (etaf-video-studio--cancel-timers etaf-video-studio--app)
-    (etaf-video-studio-backend-cancel (current-buffer))))
-
-(defun etaf-video-studio--teardown (buffer app)
-  "Release APP and kill BUFFER without signaling."
-  (when app
-    (ignore-errors (etaf-video-studio--cancel-timers app))
-    (ignore-errors (etaf-video-studio-backend-cancel buffer)))
-  (when (buffer-live-p buffer)
-    (with-current-buffer buffer
-      (setq etaf-video-studio--app nil)
-      (ignore-errors
-        (when-let* ((runtime (etaf-runtime-for-buffer buffer)))
-          (etaf-unmount runtime)))
-      (kill-buffer buffer))))
+(defun etaf-video-studio--release (app)
+  "Stop APP's timers and in-flight CLI queries; background jobs keep running."
+  (etaf-video-studio--cancel-timers app)
+  (etaf-video-studio-backend-cancel (etaf-video-studio--app-buffer app)))
 
 (defun etaf-video-studio-close ()
   "Close the video studio in the current buffer."
   (interactive)
-  (etaf-video-studio--teardown (current-buffer) (etaf-video-studio--current))
-  t)
+  (etaf-video-studio--current)
+  (etaf-app-close))
 
 (defun etaf-video-studio--start-timers (app)
   "Start APP's status poll and stage clock timers."
@@ -146,22 +113,6 @@ entry is active exactly in an application buffer.")
         (run-at-time etaf-video-studio-poll-seconds etaf-video-studio-poll-seconds
                      #'etaf-video-studio--poll app)))
 
-(defun etaf-video-studio--window-size-changed (frame)
-  "Refit the studio buffer when FRAME's size changed."
-  (ignore frame)
-  (let ((buffer (get-buffer etaf-video-studio--buffer-name)))
-    (when (and buffer (buffer-live-p buffer) (get-buffer-window buffer t))
-      (with-current-buffer buffer
-        (when etaf-video-studio--app
-          (ignore-errors
-            (etaf-refit (etaf-runtime-for-buffer buffer) (get-buffer-window buffer t))))))))
-
-(defun etaf-video-studio--install-size-hook ()
-  "Install the application's window size hook once."
-  (unless etaf-video-studio--size-hook-installed
-    (add-hook 'window-size-change-functions #'etaf-video-studio--window-size-changed)
-    (setq etaf-video-studio--size-hook-installed t)))
-
 ;;;###autoload
 (defun etaf-video-studio-open (&optional project root)
   "Open the video studio and return its buffer.
@@ -169,43 +120,28 @@ PROJECT optionally opens one project (an id or directory).  ROOT pins the
 project library for this session; nil uses `etaf-video-studio-root' and
 then the CLI default.  An already open studio is closed first."
   (interactive)
-  (let ((existing (get-buffer etaf-video-studio--buffer-name)))
-    (when (and existing (buffer-live-p existing))
-      (with-current-buffer existing
-        (when etaf-video-studio--app
-          (etaf-video-studio--teardown existing etaf-video-studio--app)))))
-  (let ((buffer (get-buffer-create etaf-video-studio--buffer-name)))
-    (with-current-buffer buffer
-      (setq-local etaf-video-studio--app
-                  (etaf-video-studio--make-app buffer (or root etaf-video-studio-root)))
-      (setq-local mode-line-format nil)
-      (setq-local truncate-lines t)
-      (setq-local auto-hscroll-mode nil)
-      (setq-local cursor-type nil)
-      (setq-local buffer-display-table
-                  (let ((table (copy-sequence (or standard-display-table
-                                                  (make-display-table)))))
-                    (set-display-table-slot table 'truncation ?\s)
-                    table))
-      (setq-local emulation-mode-map-alists
-                  (cons 'etaf-video-studio--command-maps
-                        (remq 'etaf-video-studio--command-maps
-                              emulation-mode-map-alists)))
-      (add-hook 'kill-buffer-hook #'etaf-video-studio--cleanup nil t)
-      (use-local-map etaf-video-studio-mode-map))
-    ;; The studio is one buffer application: show it in the selected window
-    ;; even when the window is wide enough for a split.
-    (let ((display-buffer-overriding-action '((display-buffer-same-window))))
-      (pop-to-buffer buffer))
-    (etaf-mount buffer (etaf-video-studio--view (buffer-local-value 'etaf-video-studio--app buffer))
-                (list :viewport-width (window-body-width nil t)
-                      :viewport-height (window-body-height)))
-    (etaf-video-studio--install-size-hook)
-    (etaf-video-studio--start-timers (buffer-local-value 'etaf-video-studio--app buffer))
-    (etaf-video-studio-refresh)
-    (when project
-      (etaf-video-studio-open-project project))
-    buffer))
+  (let* ((app (etaf-video-studio--make-app (or root etaf-video-studio-root)))
+         (theme (etaf-video-studio--app-theme-ref app))
+         ;; The View follows its window: the runtime refits after each
+         ;; settled resize, so the studio keeps no size hook of its own.
+         (buffer (etaf-app-open
+                  etaf-video-studio--buffer-name (etaf-video-studio--view app)
+                  :state app
+                  ;; Cells beyond the shell continue the page surface.
+                  :background (lambda () (plist-get (etaf-value theme) :ui-bg))
+                  :cursor nil
+                  :on-close (lambda () (etaf-video-studio--release app)))))
+    (setf (etaf-video-studio--app-buffer app) buffer)
+    (condition-case problem
+        (with-current-buffer buffer
+          (etaf-video-studio--start-timers app)
+          (etaf-video-studio-refresh)
+          (when project
+            (etaf-video-studio-open-project project))
+          buffer)
+      ((error)
+       (etaf-app-close buffer)
+       (signal (car problem) (cdr problem))))))
 
 ;;; Requests
 

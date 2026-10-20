@@ -11,28 +11,30 @@ re-implemented here.
 
 | Module | Owns |
 | --- | --- |
-| `etaf-video-studio-app` | the buffer, keys, timers, public commands and the CLI request lifecycle |
+| `etaf-video-studio-app` | the application lifecycle over `etaf-app-open`, the root keys, timers, public commands and the CLI request lifecycle |
 | `etaf-video-studio-views` | the shell, panes and rows as pure projections of the snapshot and the draft refs |
 | `etaf-video-studio-model` | the application record, the snapshot ref, selection and stage reconciliation, request/pending bookkeeping |
-| `etaf-video-studio-backend` | one bounded asynchronous `pi-skill` invocation per request, JSON parsing and the CLI error contract |
-| `etaf-video-studio-theme` | the dark/light palettes and their ETAF UI token projection |
+| `etaf-video-studio-backend` | one bounded asynchronous `pi-skill` invocation per request through `etaf-process-run`, JSON parsing and the CLI error contract |
+| `etaf-video-studio-theme` | the dark/light palettes and their ETAF UI token projection, derived with `etaf-ui-theme-tokens` |
 
 The root entry re-exports the supported subset; everything unlisted is
 internal.
 
 ## Data flow
 
-1. `etaf-video-studio-open` creates the record, displays the buffer, mounts
-   the shell and starts a 0.5 s stage clock plus a 2 s status poll. The
-   first refresh lists the library; opening a project fetches its public
-   `status` object.
+1. `etaf-video-studio-open` creates the record and opens the shell as an
+   ETAF application: the buffer's surface follows the theme's page colour,
+   the shell's root keys carry their help labels, and the Runtime refits the
+   View after each settled window change. It then starts a 0.5 s stage clock
+   plus a 2 s status poll. The first refresh lists the library; opening a
+   project fetches its public `status` object.
 2. Every command builds one CLI argument list and passes it to
    `etaf-video-studio--app-request`, which counts the in-flight query,
-   publishes a busy snapshot and calls the backend. The backend spawns
-   `pi-skill … --json`, accumulates stdout/stderr, and delivers a parsed
-   plist to the application buffer when the process exits. A missing
-   executable is an immediate `deps` result; a request past
-   `etaf-video-studio-request-timeout` is killed and reported. The command
+   publishes a busy snapshot and calls the backend. The backend runs
+   `pi-skill … --json` through `etaf-process-run`, which collects stdout and
+   stderr and settles once, and delivers a parsed plist to the application
+   buffer. A missing executable is an immediate `deps` result; a request past
+   `etaf-video-studio-request-timeout` is stopped and reported. The command
    loop is never blocked.
 3. A successful project answer is adopted through
    `etaf-video-studio--app-adopt-project`: the public project replaces the
@@ -55,8 +57,9 @@ internal.
    process group. A completed preview render becomes `:preview`; a
    completed recording is imported by the worker as a new clip at the end
    of the timeline.
-6. `etaf-video-studio-close` cancels the timers, kills the in-flight CLI
-   queries and unmounts the Runtime. It never stops a task.
+6. `etaf-video-studio-close`, or killing the buffer, runs the application's
+   single close function: it cancels the timers and the in-flight CLI
+   queries, and the Runtime is unmounted. It never stops a task.
 
 ## Invariants
 
