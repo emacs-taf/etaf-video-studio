@@ -149,8 +149,11 @@
   "Return the aspect-preserving canvas fitting WIDTH pixels and ROWS lines.
 ASPECT is the source's (WIDTH . HEIGHT); VIEWPORT-WIDTH and VIEWPORT-ROWS
 are the preview region's budget after allocating the editor and clip list."
-  (let* ((cell-width (max 1 (frame-char-width)))
-         (cell-height (max 1 (frame-char-height)))
+  (let* ((metrics (ignore-errors (etaf-display-metrics)))
+         (cell-width (max 1 (or (plist-get metrics :char-width)
+                                (frame-char-width))))
+         (cell-height (max 1 (or (plist-get metrics :line-height)
+                                 (frame-char-height))))
          (reserved-ch 6)
          (reserved-rows 6)
          (center-ch (max 16 (- (floor viewport-width cell-width) reserved-ch)))
@@ -1002,14 +1005,17 @@ are the preview region's budget after allocating the editor and clip list."
          (cl-loop for key in keys append (list key (plist-get snapshot key)))))
      :test #'equal)))
   :render
-  (let ((content
+  (let* ((cell (max 1 (or (plist-get (ignore-errors (etaf-display-metrics))
+                                  :char-width)
+                          (frame-char-width))))
+         (content
          (etaf-node
           (intern (format "etaf-video-studio--%s" kind))
           (append (list :state (etaf-value projection))
                   (unless (memq kind '(header footer)) (list :app app))
                   (when (eq kind 'properties) (list :height height))
                   (when (eq kind 'preview)
-                    (list :width (and width (- width (* 2 (frame-char-width)) 2))
+                    (list :width (and width (- width (* 2 cell) 2))
                           :height (and height (- height 2)))))
           nil)))
     (if (memq kind '(preview clips captions record publish tasks))
@@ -1079,7 +1085,10 @@ are the preview region's budget after allocating the editor and clip list."
   :render
   (let* ((state (etaf-value data))
          (viewport (etaf-runtime-viewport))
-         (width (max (* 80 (frame-char-width)) (or (car viewport) 800)))
+         (cell (max 1 (or (plist-get (ignore-errors (etaf-display-metrics))
+                                   :char-width)
+                          (frame-char-width))))
+         (width (max (* 80 cell) (or (car viewport) 800)))
          (rows (max 28 (or (cdr viewport) 30)))
          (body-rows (- rows 12))
          (pane (or (plist-get state :pane) 'projects))
@@ -1088,7 +1097,7 @@ are the preview region's budget after allocating the editor and clip list."
                      (>= body-rows 22)))
          (timeline (and split (plist-get state :has-clips) (>= body-rows 28)))
          (aside (if (memq pane '(preview clips)) 'properties pane))
-         (main-width (- width (if split (* 64 (frame-char-width)) 0))))
+         (main-width (- width (if split (* 64 cell) 0))))
     (etaf-view
      (box :position 'relative :width (list 'px width) :height (list 'lh rows)
           :background-color (etaf-video-studio-color :bg)
@@ -1098,15 +1107,15 @@ are the preview region's budget after allocating the editor and clip list."
             :width (list 'px width) :height (list 'lh rows)
             :background-color (etaf-video-studio-color :bg))
        (box :position 'absolute :top '(lh 1) :left '(ch 2)
-            :width (list 'px (- width (* 4 (frame-char-width)))) :height '(lh 1)
+            :width (list 'px (- width (* 4 cell))) :height '(lh 1)
          (etaf-video-studio--region :app app :kind 'header))
        (box :position 'absolute :top '(lh 2) :left '(ch 1)
-            :width (list 'px (- width (* 2 (frame-char-width)))) :height '(lh 3)
+            :width (list 'px (- width (* 2 cell))) :height '(lh 3)
             :padding '((lh 1) (ch 1))
             :background-color (etaf-video-studio-color :panel)
          (etaf-video-studio--region :app app :kind 'toolbar))
        (box :position 'absolute :top '(lh 6) :left '(ch 2)
-            :width (list 'px (- width (* 4 (frame-char-width)))) :height '(lh 1)
+            :width (list 'px (- width (* 4 cell))) :height '(lh 1)
          (etaf-tabs :items (etaf-video-studio--pane-tabs state nil)
                     :active (if home 'projects pane)
                     :on-change (lambda (key) (etaf-video-studio-select-pane key))))
@@ -1118,13 +1127,13 @@ are the preview region's budget after allocating the editor and clip list."
               :region (list :id 'video-studio-preview :label "预览与片段" :key ?v)
            (box :if (or split (eq pane 'preview)) :position 'absolute
                 :left '(ch 1) :top '(lh 0)
-                :width (list 'px (- main-width (* 2 (frame-char-width))))
+                :width (list 'px (- main-width (* 2 cell)))
                 :height (list 'lh (- body-rows (if timeline 12 0)))
              (etaf-video-studio--region :app app :kind 'preview
-                                       :width (- main-width (* 2 (frame-char-width)))
+                                       :width (- main-width (* 2 cell))
                                        :height (- body-rows (if timeline 12 0))))
            (box :if timeline :position 'absolute :top (list 'lh (- body-rows 11))
-                :left '(ch 1) :width (list 'px (- main-width (* 2 (frame-char-width))))
+                :left '(ch 1) :width (list 'px (- main-width (* 2 cell)))
                 :height '(lh 11) :overflow 'hidden
              (etaf-video-studio--region :app app :kind 'clips :height 11))
            (flex :if (and (not split) (not (eq pane 'preview)))
